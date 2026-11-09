@@ -471,3 +471,36 @@ fn rejects_bad_input() {
     i.zero.range_m = 50_000.0;
     assert!(matches!(Solver::new(i), Err(BallisticsError::ZeroNotFound(_))));
 }
+
+// ---------- shot tracing (3-D range) ----------
+
+#[test]
+fn trace_matches_table_and_stops_at_the_floor() {
+    let mut i = base();
+    i.effects.spin_drift = true;
+    let s = Solver::new(i.clone()).unwrap();
+    let tr = s.trace(&ShotParams::default(), 800.0, 1.0, f64::NEG_INFINITY).unwrap();
+    let last = tr.path.last().unwrap();
+    let row = row_at(i, 800.0);
+    // Path ends on the first step past 800 m; compare at matching time within a step.
+    assert!(last.x_m >= 800.0 && last.x_m < 801.0);
+    approx(last.z_m, row.windage_m, 0.01, "trace spin drift equals table windage");
+    assert!(tr.path.windows(2).all(|w| w[1].time_s > w[0].time_s));
+
+    let floor = s.trace(&ShotParams::default(), 2000.0, 1.0, -2.0).unwrap();
+    let end = floor.path.last().unwrap();
+    assert!(end.y_m < -2.0 && end.y_m > -2.5 && end.x_m < 2000.0, "stops at the floor: {end:?}");
+}
+
+#[test]
+fn wind_sampler_matches_field() {
+    let f = WindField {
+        zones: vec![WindZone { until_m: Some(300.0), speed_mps: 3.0, from_deg: 90.0 }, WindZone { until_m: None, speed_mps: 5.0, from_deg: 270.0 }],
+        gusts: Some(Gusts { intensity: 0.3, direction_variation_deg: 10.0, period_s: 5.0, correlation_length_m: 200.0, seed: 3 }),
+    };
+    let p = PreparedWind::new(&f);
+    for (x, t) in [(10.0, 0.0), (500.0, 7.5)] {
+        assert_eq!(p.at(x, t), f.at(x, t));
+    }
+    assert!(p.at(10.0, 0.0).z < 0.0 && p.at(500.0, 0.0).z > 0.0);
+}

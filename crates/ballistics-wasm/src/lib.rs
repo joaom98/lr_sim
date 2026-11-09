@@ -1,7 +1,7 @@
 //! WebAssembly bindings. Inputs and outputs are plain JS objects with camelCase keys that
 //! mirror the `ballistics` crate's serde types (all SI units).
 
-use ballistics::{Atmosphere, GroupSpec, ShotInput, TableSpec};
+use ballistics::{Atmosphere, GroupSpec, PreparedWind, ShotInput, ShotParams, Solver, TableSpec, WindField};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -72,6 +72,57 @@ pub fn standard_atmosphere(name: &str, altitude_m: f64) -> Result<JsValue, JsErr
         _ => return Err(JsError::new("unknown standard atmosphere (use \"icao\" or \"asm\")")),
     };
     to_js(&a)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TraceOpts {
+    max_range_m: f64,
+    #[serde(default = "default_path_step")]
+    path_step_m: f64,
+    #[serde(default)]
+    floor_m: Option<f64>,
+}
+
+fn default_path_step() -> f64 {
+    1.0
+}
+
+/// Fly a single shot and return its 3-D path:
+/// `trace(shotInput, shotParams, { maxRangeM, pathStepM?, floorM? }) -> Trace`.
+#[wasm_bindgen]
+pub fn trace(input: JsValue, params: JsValue, opts: JsValue) -> Result<JsValue, JsError> {
+    let input: ShotInput = from_js(input, "shot input")?;
+    let params: ShotParams = from_js(params, "shot params")?;
+    let opts: TraceOpts = from_js(opts, "trace options")?;
+    let solver = Solver::new(input).map_err(|e| JsError::new(&e.to_string()))?;
+    let t = solver
+        .trace(&params, opts.max_range_m, opts.path_step_m, opts.floor_m.unwrap_or(f64::NEG_INFINITY))
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    to_js(&t)
+}
+
+/// Samples a wind field (same model the solver integrates) for visuals such as wind flags.
+#[wasm_bindgen]
+pub struct WindSampler {
+    inner: PreparedWind,
+}
+
+#[wasm_bindgen]
+impl WindSampler {
+    #[wasm_bindgen(constructor)]
+    pub fn new(field: JsValue) -> Result<WindSampler, JsError> {
+        let f: WindField = from_js(field, "wind field")?;
+        f.validate().map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(WindSampler { inner: PreparedWind::new(&f) })
+    }
+
+    /// Wind at downrange distance `x` (m) and time `t` (s), in the solver frame:
+    /// returns `[downrange, right]` components in m/s.
+    pub fn at(&self, x: f64, t: f64) -> Vec<f64> {
+        let v = self.inner.at(x, t);
+        vec![v.x, v.z]
+    }
 }
 
 #[wasm_bindgen]

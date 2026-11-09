@@ -122,12 +122,46 @@ export interface GroupResult {
   meanRadiusM: number;
 }
 
+export interface ShotParams {
+  elevationRad?: number;
+  windageRad?: number;
+  mvDeltaMps?: number;
+  bcScale?: number;
+  timeOffsetS?: number;
+}
+
+export interface PathPoint {
+  timeS: number;
+  xM: number;
+  yM: number;
+  zM: number;
+  speedMps: number;
+}
+
+export interface Trace {
+  path: PathPoint[];
+  muzzleVelocityMps: number;
+  stabilitySg: number;
+  aeroJumpMrad: number;
+  transonicRangeM: number | null;
+  subsonicRangeM: number | null;
+}
+
+export interface WindSampler {
+  /** [downrange, right] wind components (m/s) at downrange distance x and time t */
+  at(x: number, t: number): [number, number];
+  free(): void;
+}
+
 export interface Engine {
   version: string;
+  trace(input: ShotInput, params: ShotParams, opts: { maxRangeM: number; pathStepM?: number; floorM?: number }): Trace;
+  windSampler(field: NonNullable<ShotInput["wind"]>): WindSampler;
   solve(input: ShotInput, table: { maxRangeM: number; stepM: number; pathStepM?: number }): Solution;
   fireGroup(input: ShotInput, spec: GroupSpec): GroupResult;
   stationFromBaro(altitudeM: number, baroPa: number): number;
   standardAtmosphere(name: "icao" | "asm", altitudeM?: number): Atmosphere;
+  atmosphereInfo(a: Atmosphere): { densityKgM3: number; speedOfSoundMps: number; densityAltitudeM: number; stationPressurePa: number; baroPressurePa: number };
 }
 
 export async function loadEngine(): Promise<Engine> {
@@ -136,7 +170,19 @@ export async function loadEngine(): Promise<Engine> {
     version: wasm.version(),
     solve: (input, table) => wasm.solve(input, table) as Solution,
     fireGroup: (input, spec) => wasm.fireGroup(input, spec) as GroupResult,
+    trace: (input, params, opts) => wasm.trace(input, params, opts) as Trace,
+    windSampler: (field) => {
+      const s = new wasm.WindSampler(field);
+      return {
+        at: (x, t) => {
+          const v = s.at(x, t);
+          return [v[0], v[1]];
+        },
+        free: () => s.free(),
+      };
+    },
     stationFromBaro: (alt, baro) => wasm.stationFromBaro(alt, baro),
     standardAtmosphere: (name, alt = 0) => wasm.standardAtmosphere(name, alt) as Atmosphere,
+    atmosphereInfo: (a) => wasm.atmosphereInfo(a),
   };
 }

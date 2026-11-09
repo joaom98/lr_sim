@@ -344,6 +344,7 @@ fn fly(
     checkpoints: &[f64],
     path_step: Option<f64>,
     integ: &Integration,
+    floor_y: f64,
 ) -> FlightOut {
     let mut out = FlightOut::default();
     let mut st = start;
@@ -355,7 +356,7 @@ fn fly(
         out.path.push(path_point(&st));
     }
     while idx < checkpoints.len() {
-        if st.t > integ.max_time_s || st.v.norm() < integ.min_speed_mps {
+        if st.t > integ.max_time_s || st.v.norm() < integ.min_speed_mps || st.p.y < floor_y {
             break;
         }
         let next = model.step(&st, &env, integ.step_s);
@@ -392,6 +393,9 @@ fn fly(
         st = next;
         env = env_next;
         mach_prev = mach_next;
+    }
+    if path_step.is_some() && out.path.last().map_or(true, |p| p.time_s < st.t) {
+        out.path.push(path_point(&st));
     }
     out
 }
@@ -468,7 +472,7 @@ impl Solver {
         for _ in 0..50 {
             let dir = (frame.los + frame.up_s * e.tan()).normalized();
             let start = State { t: 0.0, p: frame.up_s * -self.input.rifle.sight_height_m, v: dir * mv };
-            let out = fly(&model, &frame, start, &[r], None, &self.input.integration);
+            let out = fly(&model, &frame, start, &[r], None, &self.input.integration, f64::NEG_INFINITY);
             let c = out.crossings.first().ok_or_else(|| {
                 BallisticsError::ZeroNotFound(format!("the bullet does not reach the zero range of {r} m"))
             })?;
@@ -521,6 +525,7 @@ impl Solver {
         params: &ShotParams,
         checkpoints: &[f64],
         path_step: Option<f64>,
+        floor_y: f64,
     ) -> Result<(FlightOut, Frame), BallisticsError> {
         let i = &self.input;
         positive(params.bc_scale, "BC scale")?;
@@ -533,7 +538,7 @@ impl Solver {
         let mv = self.muzzle_velocity + params.mv_delta_mps;
         positive(mv, "muzzle velocity")?;
         let start = State { t: 0.0, p: frame.up_s * -i.rifle.sight_height_m, v: dir * mv };
-        Ok((fly(&model, &frame, start, checkpoints, path_step, &i.integration), frame))
+        Ok((fly(&model, &frame, start, checkpoints, path_step, &i.integration, floor_y), frame))
     }
 
     fn row(&self, c: &Crossing, frame: &Frame) -> TrajectoryRow {
@@ -577,7 +582,7 @@ impl Solver {
         let n = (spec.max_range_m / spec.step_m + 1e-9).floor() as usize;
         let checkpoints: Vec<f64> = (0..=n).map(|k| k as f64 * spec.step_m).collect();
         let params = ShotParams::default();
-        let (out, frame) = self.fly_shot(&params, &checkpoints, spec.path_step_m)?;
+        let (out, frame) = self.fly_shot(&params, &checkpoints, spec.path_step_m, f64::NEG_INFINITY)?;
         let rows: Vec<TrajectoryRow> = out.crossings.iter().map(|c| self.row(c, &frame)).collect();
 
         let atm = &self.input.atmosphere;
@@ -626,9 +631,60 @@ impl Solver {
     /// or `None` if the bullet never gets there.
     pub fn impact(&self, range_m: f64, params: &ShotParams) -> Result<Option<TrajectoryRow>, BallisticsError> {
         positive(range_m, "range")?;
-        let (out, frame) = self.fly_shot(params, &[range_m], None)?;
+        let (out, frame) = self.fly_shot(params, &[range_m], None, f64::NEG_INFINITY)?;
         Ok(out.crossings.first().map(|c| self.row(c, &frame)))
     }
+}
+
+impl Solver {
+    /// Fly one shot and return its 3-D path (solver frame, spin drift included in `z_m`),
+    /// sampled every `path_step_m` of line-of-sight distance. The path ends at `max_range_m`,
+    /// when the bullet drops below `floor_y_m` (height relative to the eye), or when it
+    /// slows down or runs out of flight time.
+    pub fn trace(
+        &self,
+        params: &ShotParams,
+        max_range_m: f64,
+        path_step_m: f64,
+        floor_y_m: f64,
+    ) -> Result<Trace, BallisticsError> {
+        positive(max_range_m, "trace range")?;
+        positive(path_step_m, "path step")?;
+        require(!floor_y_m.is_nan(), "floor must be a number")?;
+        let (out, _) = self.fly_shot(params, &[max_range_m], Some(path_step_m), floor_y_m)?;
+        let sign = self.input.rifle.twist_direction.sign();
+        let spin = self.input.effects.spin_drift;
+        let path = out
+            .path
+            .into_iter()
+            .map(|mut p| {
+                if spin {
+                    p.z_m += litz_spin_drift_m(self.sg, p.time_s) * sign;
+                }
+                p
+            })
+            .collect();
+        Ok(Trace {
+            path,
+            muzzle_velocity_mps: self.muzzle_velocity + params.mv_delta_mps,
+            stability_sg: self.sg,
+            aero_jump_mrad: self.aero_jump(params.time_offset_s) * 1000.0,
+            transonic_range_m: out.transonic,
+            subsonic_range_m: out.subsonic,
+        })
+    }
+}
+
+/// One shot's flight path (see [`Solver::trace`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Trace {
+    pub path: Vec<PathPoint>,
+    pub muzzle_velocity_mps: f64,
+    pub stability_sg: f64,
+    pub aero_jump_mrad: f64,
+    pub transonic_range_m: Option<f64>,
+    pub subsonic_range_m: Option<f64>,
 }
 
 fn validate(i: &ShotInput) -> Result<(), BallisticsError> {

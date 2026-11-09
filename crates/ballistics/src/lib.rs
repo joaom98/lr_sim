@@ -32,7 +32,7 @@ pub use math::Vec3;
 pub use projectile::{Bullet, Load, Rifle, TwistDirection};
 pub use shot::{fire_group, GroupResult, GroupSpec, Impact};
 pub use solver::{
-    solve, Effects, Integration, PathPoint, ShotInput, ShotParams, Solution, Solver, TableSpec,
+    solve, Effects, Integration, PathPoint, ShotInput, ShotParams, Solution, Solver, TableSpec, Trace,
     TrajectoryRow, ZeroSpec,
 };
-pub use wind::{Gusts, WindField, WindZone};
+pub use wind::{Gusts, PreparedWind, WindField, WindZone};

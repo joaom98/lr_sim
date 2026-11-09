@@ -86,7 +86,7 @@ impl WindField {
 
 /// Wind field with each zone's vector precomputed, for use inside the integrator.
 #[derive(Clone, Debug)]
-pub(crate) struct PreparedWind {
+pub struct PreparedWind {
     /// (zone end, base wind vector)
     zones: Vec<(f64, Vec3)>,
     gusts: Option<Gusts>,

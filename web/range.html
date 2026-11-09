@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Long Range Simulator</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e8592a' stroke-width='2.5'/%3E%3Cpath d='M16 3v26M3 16h26' stroke='%23e8592a' stroke-width='2'/%3E%3C/svg%3E" />
+  </head>
+  <body class="range-page">
+    <canvas id="view"></canvas>
+    <canvas id="overlay"></canvas>
+
+    <div id="hud" hidden>
+      <section class="hud-card hud-tl" aria-label="Weather meter">
+        <h2>Weather meter</h2>
+        <dl id="kestrel"></dl>
+      </section>
+      <section class="hud-card hud-tr" aria-label="Scope">
+        <h2 id="scope-name">Scope</h2>
+        <dl id="turrets"></dl>
+      </section>
+      <section class="hud-card hud-bl" aria-label="Shooter">
+        <dl id="shooter"></dl>
+        <div class="breath" aria-label="Breathing"><div id="breath-bar"></div><span id="breath-label"></span></div>
+      </section>
+      <div class="hud-msg" aria-live="polite">
+        <div id="call"></div>
+        <div id="ranging"></div>
+        <div id="solution"></div>
+      </div>
+      <aside id="log" class="hud-card hud-log" aria-label="Target and shot log">
+        <h2 id="tablet-title">Target</h2>
+        <canvas id="tablet" width="240" height="240" aria-label="Electronic target"></canvas>
+        <div id="group-line"></div>
+        <ol id="shots"></ol>
+      </aside>
+    </div>
+
+    <div id="setup" class="setup">
+      <div class="setup-card">
+        <header>
+          <h1>Long Range Simulator</h1>
+          <a href="./" class="link">Ballistic calculator</a>
+        </header>
+        <form id="setup-form" class="setup-grid"></form>
+        <div class="setup-actions">
+          <button type="button" id="start">Go to the range</button>
+          <span id="setup-note" class="note"></span>
+        </div>
+        <details class="controls" open>
+          <summary>Controls</summary>
+          <dl>
+            <div><dt>Mouse</dt><dd>Aim (click the view to capture the mouse)</dd></div>
+            <div><dt>Left click</dt><dd>Fire</dd></div>
+            <div><dt>Wheel</dt><dd>Magnification</dd></div>
+            <div><dt>W / S, ↑ / ↓</dt><dd>Elevation turret, one click (hold Ctrl for 10)</dd></div>
+            <div><dt>A / D, ← / →</dt><dd>Windage turret</dd></div>
+            <div><dt>Z</dt><dd>Turrets back to zero</dd></div>
+            <div><dt>Space (hold)</dt><dd>Hold breath. Best fired in the natural pause after exhaling</dd></div>
+            <div><dt>R</dt><dd>Laser rangefinder</dd></div>
+            <div><dt>G</dt><dd>Dial the calculator's elevation for the last ranged distance</dd></div>
+            <div><dt>1–6</dt><dd>Shooting position</dd></div>
+            <div><dt>X</dt><dd>Reload magazine</dd></div>
+            <div><dt>V</dt><dd>Scope / naked eye</dd></div>
+            <div><dt>I</dt><dd>Reticle illumination</dd></div>
+            <div><dt>C</dt><dd>Paste targets (clear marks)</dd></div>
+            <div><dt>Tab</dt><dd>Show / hide the log</dd></div>
+            <div><dt>Esc</dt><dd>Pause and settings</dd></div>
+          </dl>
+        </details>
+      </div>
+    </div>
+    <script type="module" src="/src/range/main.ts"></script>
+  </body>
+</html>
