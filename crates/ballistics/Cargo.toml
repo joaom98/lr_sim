@@ -1,0 +1,13 @@
+[package]
+name = "ballistics"
+description = "Long-range small-arms exterior ballistics core (point-mass solver, atmosphere, wind, spin and Earth effects)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }

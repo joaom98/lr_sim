@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Ballistic Calculator</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%232a78d6' stroke-width='2.5'/%3E%3Cpath d='M16 3v26M3 16h26' stroke='%232a78d6' stroke-width='2'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <h1>Ballistic Calculator</h1>
+        <p class="tagline">Long-range small arms simulator · point-mass solver in WebAssembly</p>
+      </div>
+      <div class="toolbar" role="toolbar" aria-label="Units and actions">
+        <div class="segmented" role="group" aria-label="Unit system">
+          <button type="button" data-unit="system:metric">Metric</button>
+          <button type="button" data-unit="system:imperial">Imperial</button>
+        </div>
+        <div class="segmented" role="group" aria-label="Angular unit">
+          <button type="button" data-unit="angular:mil">MIL</button>
+          <button type="button" data-unit="angular:moa">MOA</button>
+        </div>
+        <button type="button" id="print" class="ghost">Print DOPE card</button>
+        <button type="button" id="reset" class="ghost">Reset</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <form id="inputs" class="inputs" aria-label="Shot inputs" novalidate></form>
+
+      <section class="results" aria-label="Results">
+        <div id="error" class="error-box" role="alert" hidden></div>
+        <div id="summary" class="tiles"></div>
+        <ul id="warnings" class="warnings" hidden></ul>
+
+        <div class="charts">
+          <div id="chart-elev" class="chart-box"></div>
+          <div id="chart-wind" class="chart-box"></div>
+          <div id="chart-vel" class="chart-box"></div>
+          <div id="chart-energy" class="chart-box"></div>
+        </div>
+
+        <h2 class="print-title">Trajectory</h2>
+        <div class="table-wrap">
+          <table class="traj">
+            <thead id="table-head"></thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+        <p class="legend-note"><span class="swatch transonic"></span> transonic (below Mach 1.2) <span class="swatch subsonic"></span> subsonic</p>
+
+        <section class="group" aria-labelledby="group-title">
+          <h2 id="group-title">Group simulator</h2>
+          <p class="hint">Fires a seeded string with muzzle-velocity and BC spread, your aiming error and gusting wind over time. The scope is dialed for the calculated solution, so the spread is what the rifle, ammo and conditions add.</p>
+          <div class="group-body">
+            <div id="group-form" class="grid"></div>
+            <div id="group-chart" class="group-chart"></div>
+            <div id="group-stats"></div>
+          </div>
+        </section>
+        <p id="timing" class="timing"></p>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

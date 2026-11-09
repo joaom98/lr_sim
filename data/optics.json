@@ -1,0 +1,13 @@
+{
+  "$comment": "Generic riflescopes. clickValue in the scope's angular unit (mil or moa).",
+  "optics": [
+    { "id": "ffp-mil-5-25", "name": "5-25x56 FFP, MIL/MIL", "unit": "mil", "clickValue": 0.1, "focalPlane": "ffp",
+      "magMin": 5, "magMax": 25, "objectiveMm": 56, "elevationTravel": 30, "windageTravel": 12, "zeroStop": true },
+    { "id": "ffp-mil-4-16", "name": "4-16x44 FFP, MIL/MIL", "unit": "mil", "clickValue": 0.1, "focalPlane": "ffp",
+      "magMin": 4, "magMax": 16, "objectiveMm": 44, "elevationTravel": 26, "windageTravel": 10, "zeroStop": true },
+    { "id": "ffp-moa-5-25", "name": "5-25x56 FFP, MOA/MOA", "unit": "moa", "clickValue": 0.25, "focalPlane": "ffp",
+      "magMin": 5, "magMax": 25, "objectiveMm": 56, "elevationTravel": 100, "windageTravel": 40, "zeroStop": true },
+    { "id": "sfp-moa-3-15", "name": "3-15x50 SFP, MOA/MOA", "unit": "moa", "clickValue": 0.25, "focalPlane": "sfp",
+      "magMin": 3, "magMax": 15, "objectiveMm": 50, "elevationTravel": 70, "windageTravel": 35, "zeroStop": false }
+  ]
+}

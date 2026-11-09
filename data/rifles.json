@@ -1,0 +1,29 @@
+{
+  "$comment": "Generic rifle archetypes. Units: inches, kg. twistIn = inches per turn.",
+  "rifles": [
+    { "id": "bolt-308", "name": ".308-class bolt-action", "caliber": ".308", "action": "bolt",
+      "barrelIn": 24, "twistIn": 10, "twistDirection": "right", "sightHeightIn": 1.9, "weightKg": 6.4,
+      "defaultAmmo": "308-175-match" },
+    { "id": "prs-65", "name": "6.5-class PRS rifle", "caliber": "6.5", "action": "bolt",
+      "barrelIn": 26, "twistIn": 8, "twistDirection": "right", "sightHeightIn": 2.0, "weightKg": 7.5,
+      "defaultAmmo": "65-140-match" },
+    { "id": "prs-6", "name": "6mm-class PRS rifle", "caliber": "6mm", "action": "bolt",
+      "barrelIn": 26, "twistIn": 7.5, "twistDirection": "right", "sightHeightIn": 2.0, "weightKg": 7.7,
+      "defaultAmmo": "6-105-match" },
+    { "id": "semi-308", "name": ".308-class semi-auto precision rifle", "caliber": ".308", "action": "semi",
+      "barrelIn": 20, "twistIn": 10, "twistDirection": "right", "sightHeightIn": 2.4, "weightKg": 5.4,
+      "defaultAmmo": "308-175-match" },
+    { "id": "mag-300", "name": ".300 magnum-class long-range rifle", "caliber": ".300m", "action": "bolt",
+      "barrelIn": 26, "twistIn": 9, "twistDirection": "right", "sightHeightIn": 2.0, "weightKg": 7.3,
+      "defaultAmmo": "300-215-match" },
+    { "id": "mag-338", "name": ".338-class magnum rifle", "caliber": ".338", "action": "bolt",
+      "barrelIn": 27, "twistIn": 9.4, "twistDirection": "right", "sightHeightIn": 2.1, "weightKg": 7.9,
+      "defaultAmmo": "338-300-match" },
+    { "id": "amr-50", "name": ".50-class anti-materiel rifle", "caliber": ".50", "action": "semi",
+      "barrelIn": 29, "twistIn": 15, "twistDirection": "right", "sightHeightIn": 2.6, "weightKg": 13.5,
+      "defaultAmmo": "50-750-match" },
+    { "id": "rimfire-22", "name": ".22 LR rimfire trainer", "caliber": ".22lr", "action": "bolt",
+      "barrelIn": 20, "twistIn": 16, "twistDirection": "right", "sightHeightIn": 1.6, "weightKg": 4.5,
+      "defaultAmmo": "22lr-40-match" }
+  ]
+}
