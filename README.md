@@ -103,6 +103,16 @@ cd web && npm install && npm run dev
 `npm run dev` rebuilds the WebAssembly module, then serves the calculator on http://localhost:5173
 and the range on http://localhost:5173/range.html.
 
+## Deploying (Render)
+
+The site is fully static. `render.yaml` is a Render Blueprint: in the Render dashboard choose
+**New → Blueprint**, pick this repository, and apply. Every push to `main` redeploys.
+
+`render-build.sh` installs a minimal Rust toolchain and the prebuilt `wasm-bindgen` CLI (the
+version is read from `Cargo.lock`), compiles the engine to WebAssembly and builds the site into
+`web/dist`. It also runs locally and skips anything already installed. The range is served at
+`/range.html` (and `/range`); the calculator at `/`.
+
 ## Validation
 
 `crates/ballistics/tests/physics.rs` checks the solver against closed-form solutions (vacuum

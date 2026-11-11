@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "web", "exec", "--", "vite", "web", "--port", "5173", "--strictPort"],
       "port": 5173
+    },
+    {
+      "name": "dist",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "web", "exec", "--", "vite", "preview", "web", "--port", "4173", "--strictPort"],
+      "port": 4173
     }
   ]
 }

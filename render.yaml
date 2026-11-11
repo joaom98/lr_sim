@@ -1,0 +1,23 @@
+# Render Blueprint: in the Render dashboard choose New > Blueprint and pick this repository.
+# Deploys the calculator and the 3-D range as one free static site.
+services:
+  - type: web
+    name: lrs-small-arms-sim
+    runtime: static
+    buildCommand: bash render-build.sh
+    staticPublishPath: web/dist
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+    headers:
+      - path: /*.wasm
+        name: Content-Type
+        value: application/wasm
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    routes:
+      - type: rewrite
+        source: /range
+        destination: /range.html
