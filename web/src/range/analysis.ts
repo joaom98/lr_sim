@@ -34,6 +34,8 @@ export interface ShotContext {
   bcScale: number;
   timeS: number;
   trigger: { x: number; y: number };
+  /** scope zero error (mrad): part of the data, present in every variant */
+  zero: { x: number; y: number };
 }
 
 export const PART_LABELS: Record<PartKey, string> = {
@@ -66,8 +68,8 @@ function offsetFor(
       mvDeltaMps: opts.ammo ? ctx.mvDeltaMps : 0,
       bcScale: opts.ammo ? ctx.bcScale : 1,
       timeS: ctx.timeS,
-      errX: opts.trigger ? ctx.trigger.x : 0,
-      errY: opts.trigger ? ctx.trigger.y : 0,
+      errX: (opts.trigger ? ctx.trigger.x : 0) + ctx.zero.x,
+      errY: (opts.trigger ? ctx.trigger.y : 0) + ctx.zero.y,
     },
     [],
   );

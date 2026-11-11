@@ -13,6 +13,9 @@ import { groundHeight } from "./terrain";
 import { World, type TargetObj } from "./world";
 import { analyzeShot, coach, type Breakdown, type ShotContext } from "./analysis";
 import { heatFactor, MiragePass } from "./mirage";
+import { addRecord, records, save, type ShotRecord } from "./records";
+import { career, finishDrill, isUnlocked, nextRank, rank, resetCareer, stats, unlockName, type Award } from "./career";
+import { DRILLS, DrillRun, type DrillDef } from "./drills";
 
 // ---------------------------------------------------------------- settings & records
 
@@ -24,32 +27,8 @@ interface Settings {
   windId: string;
   seed: number;
   positionId: string;
-}
-
-/** One fired shot. Kept small and stable so a progression system can build on it later. */
-export interface ShotRecord {
-  at: string;
-  session: number;
-  shot: number;
-  rifleId: string;
-  ammoId: string;
-  opticId: string;
-  position: string;
-  targetId: string | null;
-  targetRangeM: number | null;
-  result: "hit" | "miss";
-  /** impact relative to the target centre (mrad, + right / + up) */
-  offsetMrad: { x: number; y: number } | null;
-  dialMrad: { elevation: number; windage: number };
-  timeOfFlightS: number;
-  impactVelocityMps: number;
-  energyJ: number;
-  heldBreath: boolean;
-  inPause: boolean;
-  /** rifle cant when fired (deg) */
-  cantDeg?: number;
-  /** what moved the shot (mrad per source), when it was aimed at a target */
-  breakdown?: { key: string; x: number; y: number }[];
+  /** "free" or a drill id */
+  mode: string;
 }
 
 /** Parallax settings on the side focus knob (m); the last is infinity. */
@@ -58,7 +37,6 @@ const PARALLAX_STEPS = [25, 50, 75, 100, 150, 200, 300, 400, 500, 600, 800, 1000
 const PARALLAX_K = 45;
 
 const SETTINGS_KEY = "lrs.range.settings.v1";
-const RECORDS_KEY = "lrs.shots.v1";
 
 function loadSettings(): Settings {
   const d: Settings = {
@@ -69,6 +47,7 @@ function loadSettings(): Settings {
     windId: "moderate",
     seed: Math.floor(Math.random() * 1e6),
     positionId: POSITIONS[0].id,
+    mode: "free",
   };
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") };
@@ -77,21 +56,6 @@ function loadSettings(): Settings {
   }
 }
 
-function save(key: string, v: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(v));
-  } catch {
-    /* storage unavailable */
-  }
-}
-
-function loadRecords(): ShotRecord[] {
-  try {
-    return JSON.parse(localStorage.getItem(RECORDS_KEY) ?? "[]");
-  } catch {
-    return [];
-  }
-}
 
 let settings = loadSettings();
 
@@ -113,19 +77,93 @@ function sel(id: keyof Settings, label: string, opts: [string, string][]) {
     .join("")}</select></label>`;
 }
 
+const drillDef = (id = settings.mode): DrillDef | null => DRILLS.find((d) => d.id === id) ?? null;
+
+/** Gear locks apply in drills only; free range is a sandbox. */
+function gearLabel(kind: "rifles" | "optics", id: string, name: string): string {
+  if (!drillDef() || isUnlocked(kind, id)) return name;
+  return `${name} (unlocks at ${unlockName(kind, id)})`;
+}
+
+function selLocked(id: "rifleId" | "opticId", label: string, kind: "rifles" | "optics", items: { id: string; name: string }[]) {
+  const v = String(settings[id]);
+  const locked = (x: { id: string }) => Boolean(drillDef()) && !isUnlocked(kind, x.id);
+  return `<label class="field"><span>${esc(label)}</span><select data-k="${id}">${items
+    .map(
+      (x) =>
+        `<option value="${esc(x.id)}" ${x.id === v ? "selected" : ""} ${locked(x) ? "disabled" : ""}>${esc(gearLabel(kind, x.id, x.name))}</option>`,
+    )
+    .join("")}</select></label>`;
+}
+
+function renderCareer() {
+  const r = rank();
+  const next = nextRank();
+  const frac = next ? (career.xp - r.xp) / (next.xp - r.xp) : 1;
+  $("career").innerHTML = `<div class="rank">${esc(r.name)}</div>
+    <div class="xpbar" role="progressbar" aria-label="XP to next rank" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}"><div style="width:${(frac * 100).toFixed(1)}%"></div></div>
+    <div class="xptext">${career.xp} XP${next ? ` · ${next.xp - career.xp} XP to ${esc(next.name)}` : " · top rank"}</div>`;
+
+  const card = (id: string, name: string, line: string, locked: string | null) => {
+    const best = career.best[id];
+    return `<button type="button" class="mode" role="radio" data-mode="${esc(id)}" aria-checked="${settings.mode === id}" ${locked ? "disabled" : ""}>
+      <b>${esc(name)}</b><span>${esc(line)}</span>
+      ${locked ? `<span class="lock">Unlocks at ${esc(locked)}</span>` : best ? `<span class="best">Best ${best.score}/${best.max}</span>` : ""}
+    </button>`;
+  };
+  const d = drillDef();
+  $("modes").innerHTML =
+    card("free", "Free range", "Sandbox: every rifle and scope", null) +
+    DRILLS.map((x) => card(x.id, x.name, `${x.xp} XP${x.timeLimitS ? ` · ${x.timeLimitS} s` : ""}`, isUnlocked("drills", x.id) ? null : unlockName("drills", x.id))).join("") +
+    `<p class="mode-summary" style="grid-column: 1 / -1">${esc(d ? d.summary + (d.recommended ? ` Recommended: ${d.recommended}.` : "") : "Shoot anything, any way you like. Shots still count toward your statistics.")}</p>`;
+
+  const st = stats();
+  const pct = (h: number, n: number) => (n ? `${Math.round((h / n) * 100)} %` : "–");
+  $("stats").innerHTML = st.shots
+    ? `<dl class="stats-grid">
+        <div class="stat"><dt>Shots at targets</dt><dd>${st.shots}</dd></div>
+        <div class="stat"><dt>Hit rate</dt><dd>${pct(st.hits, st.shots)}</dd></div>
+        ${st.bands.map((b) => `<div class="stat"><dt>${b.label}</dt><dd>${pct(b.hits, b.shots)} <small>(${b.shots})</small></dd></div>`).join("")}
+        ${st.topErrors.map((e, i) => `<div class="stat"><dt>${i === 0 ? "Most common error" : "Next"}</dt><dd>${esc(e.label)} ${Math.round(e.share * 100)} %</dd></div>`).join("")}
+      </dl>
+      <p class="note"><button type="button" id="reset-career" class="ghost-btn">Reset career</button></p>`
+    : "<p class='note'>No shots yet. Statistics build up from every shot you fire.</p>";
+}
+
 function renderSetup() {
+  // In a drill, swap locked gear for the first unlocked choice.
+  if (drillDef()) {
+    if (!isUnlocked("rifles", settings.rifleId)) settings.rifleId = rifles.find((r) => isUnlocked("rifles", r.id))!.id;
+    if (!isUnlocked("optics", settings.opticId)) settings.opticId = optics.find((o) => isUnlocked("optics", o.id))!.id;
+  }
   const rifle = rifles.find((r) => r.id === settings.rifleId) ?? rifles[0];
   const loads = ammo.filter((a) => a.caliber === rifle.caliber);
   if (!loads.some((a) => a.id === settings.ammoId)) settings.ammoId = rifle.defaultAmmo;
+  renderCareer();
   setupForm.innerHTML =
-    sel("rifleId", "Rifle", rifles.map((r) => [r.id, r.name])) +
+    selLocked("rifleId", "Rifle", "rifles", rifles) +
     sel("ammoId", "Load", loads.map((a) => [a.id, a.name])) +
-    sel("opticId", "Scope", optics.map((o) => [o.id, o.name])) +
+    selLocked("opticId", "Scope", "optics", optics) +
     sel("positionId", "Position", POSITIONS.map((p) => [p.id, `${p.key}. ${p.name}`])) +
     sel("weatherId", "Weather", weatherPresets.map((w) => [w.id, w.name])) +
     sel("windId", "Wind", windPresets.map((w) => [w.id, w.name])) +
     `<label class="field"><span>Session seed</span><input type="number" data-k="seed" value="${settings.seed}" step="1"></label>`;
 }
+
+$("modes").addEventListener("click", (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-mode]");
+  if (!b || b.disabled) return;
+  settings.mode = b.dataset.mode!;
+  save(SETTINGS_KEY, settings);
+  renderSetup();
+  if (session) $("setup-note").textContent = "Start to begin the selected mode.";
+});
+$("stats").addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).id !== "reset-career") return;
+  if (!window.confirm("Reset XP, rank and best scores? Shot history is kept.")) return;
+  resetCareer();
+  renderSetup();
+});
 
 setupForm.addEventListener("change", (e) => {
   const t = e.target as HTMLInputElement | HTMLSelectElement;
@@ -175,12 +213,16 @@ interface Session {
   heat: number;
   lastFlight: { path: THREE.Vector3[]; times: number[] } | null;
   replay: { t: number; bullet: THREE.Mesh } | null;
+  drill: DrillRun | null;
+  /** scope zero error: where the bore points relative to the reticle at zero dial (mrad) */
+  zeroErr: { x: number; y: number };
+  /** the zero stop only engages once zero has been set (always, except while zeroing) */
+  zeroStopSet: boolean;
 }
 
 let engine: Engine;
 let session: Session | null = null;
 const audio = new RangeAudio();
-const records = loadRecords();
 const keys = new Set<string>();
 const log = $("shots");
 
@@ -213,7 +255,13 @@ function startSession() {
   }
   const range = ranges[0];
   const weather = weatherPresets.find((w) => w.id === settings.weatherId) ?? weatherPresets[0];
-  const wind = windPresets.find((w) => w.id === settings.windId) ?? windPresets[1];
+  const def = drillDef();
+  let wind = windPresets.find((w) => w.id === settings.windId) ?? windPresets[1];
+  // A wind-reading drill needs wind worth reading.
+  if (def?.minWind) {
+    const need = windPresets.findIndex((w) => w.id === def.minWind);
+    if (windPresets.indexOf(wind) < need) wind = windPresets[need];
+  }
   const cond = makeConditions(settings.seed, range, weather, wind, engine.stationFromBaro);
   const rifle = rifles.find((r) => r.id === settings.rifleId) ?? rifles[0];
   const lo: Loadout = {
@@ -259,8 +307,17 @@ function startSession() {
     heat: heatFactor(cond.atmosphere.temperatureC, cond.atmosphere.humidity),
     lastFlight: null,
     replay: null,
+    drill: null,
+    zeroErr: { x: 0, y: 0 },
+    zeroStopSet: !def?.offZero,
   };
+  startDrill(session, def);
   $("scope-name").textContent = lo.optic.name;
+  for (const id of ["solution", "ranging", "coach", "call"]) {
+    $(id).textContent = "";
+    $(id).classList.remove("show");
+  }
+  drawTablet(session);
   log.innerHTML = "";
   $("group-line").textContent = "";
   message("call", `${range.name}. Zeroed at 100 m. Range a target with R.`, 6);
@@ -372,7 +429,7 @@ function shoot() {
   const intended = intendedTarget(s, visual.yaw, visual.pitch, eye);
   let out: ShotOutcome;
   try {
-    out = fire(engine, lo, s.cond, aim, s.dial, { mvDeltaMps: mvDelta, bcScale, timeS: s.t, errX: err.x, errY: err.y }, s.world.targets);
+    out = fire(engine, lo, s.cond, aim, s.dial, { mvDeltaMps: mvDelta, bcScale, timeS: s.t, errX: err.x + s.zeroErr.x, errY: err.y + s.zeroErr.y }, s.world.targets);
   } catch (e) {
     message("call", `Engine error: ${(e as Error).message ?? e}`, 5);
     return;
@@ -400,6 +457,7 @@ function shoot() {
         bcScale,
         timeS: s.t,
         trigger: err,
+        zero: { ...s.zeroErr },
       }
     : null;
   const coachInfo = { holdTimeS: s.shooter.holdTime, cantDeg, parallaxM: parallaxM(s) };
@@ -511,12 +569,12 @@ function resolveImpact(
     inPause,
     cantDeg: coachInfo.cantDeg,
     breakdown: breakdown?.parts.map((p) => ({ key: p.key, x: +p.x.toFixed(4), y: +p.y.toFixed(4) })),
+    drillId: s.drill?.def.id,
   };
-  records.push(rec);
-  if (records.length > 1000) records.splice(0, records.length - 1000);
-  save(RECORDS_KEY, records);
+  addRecord(rec);
   addLogRow(rec, tg, breakdown);
   drawTablet(s);
+  if (s.drill) drillShot(s, rec, tg);
 }
 
 function addLogRow(r: ShotRecord, tg: TargetObj | null, b: Breakdown | null) {
@@ -638,25 +696,37 @@ function drawTablet(s: Session) {
 
 function rangefind() {
   const s = session!;
+  if (s.drill && !s.drill.def.tools.rangefinder) {
+    message("ranging", "No rangefinder in this drill: range with the reticle, then press N", 4);
+    return;
+  }
   // Build the beam from the current sight line rather than the last rendered frame.
   const line = sightLine(s);
   const eye = new THREE.Vector3(0, s.shooter.position.eyeHeightM + groundHeight(0, 0), 0);
-  const beam = new THREE.Vector3(Math.sin(line.yaw) * Math.cos(line.pitch), Math.sin(line.pitch), -Math.cos(line.yaw) * Math.cos(line.pitch));
-  const ray = new THREE.Raycaster(eye, beam);
+  // The laser beam is about 1.5 x 0.8 mrad wide. Sample it and report the strongest return:
+  // steel anywhere in the beam wins (like a first-target mode), otherwise the nearest ground.
+  let targetHit = Infinity;
+  let groundHit = Infinity;
+  const ray = new THREE.Raycaster();
   ray.far = 2600;
-  const hits = ray.intersectObjects(s.world.raycastables, false);
-  const h = hits[0];
-  if (!h) {
-    message("ranging", "Rangefinder: no return", 3);
-    return;
+  for (let ix = -2; ix <= 2; ix++) {
+    for (let iy = -1; iy <= 1; iy++) {
+      const yaw = line.yaw + (ix * 0.375) / 1000;
+      const pitch = line.pitch + (iy * 0.4) / 1000;
+      ray.set(eye, new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)));
+      const h = ray.intersectObjects(s.world.raycastables, false)[0];
+      if (!h) continue;
+      if (h.object.userData.target) targetHit = Math.min(targetHit, h.distance);
+      else groundHit = Math.min(groundHit, h.distance);
+    }
   }
-  const isTarget = Boolean(h.object.userData.target);
   // Steel returns well; bare ground only to ~1400 m.
-  if (!isTarget && h.distance > 1400) {
-    message("ranging", "Rangefinder: no return (ground too far)", 3);
+  const dist = targetHit < Infinity ? targetHit : groundHit <= 1400 ? groundHit : null;
+  if (dist === null) {
+    message("ranging", groundHit < Infinity ? "Rangefinder: no return (ground too far)" : "Rangefinder: no return", 3);
     return;
   }
-  const d = h.distance + s.rand.normal() * 0.5;
+  const d = dist + s.rand.normal() * 0.5;
   const pitch = line.pitch;
   s.lastRange = { distanceM: d, pitch };
   message("ranging", `Range ${d.toFixed(0)} m · angle ${((pitch * 180) / Math.PI).toFixed(1)}°`, 8);
@@ -667,6 +737,8 @@ function rangefind() {
 function showSolution() {
   const s = session!;
   if (!s.lastRange) return;
+  const calc = s.drill?.def.tools.calculator ?? "full";
+  if (calc === "none") return;
   const [wd, wr] = s.meterWind;
   const speed = Math.hypot(wd, wr);
   const fromRel = (Math.atan2(-wr, -wd) * 180) / Math.PI;
@@ -678,13 +750,185 @@ function showSolution() {
     const r = sol.rows[sol.rows.length - 1];
     const cm = clickMrad(s.lo.optic);
     s.solution = { elevationClicks: Math.round(r.elevationMrad / cm), windageClicks: Math.round(r.windageMrad / cm) };
-    $("solution").textContent = `Calculator (shooter's wind): ${dir(toOpticUnit(r.elevationMrad), "U", "D")} · ${dir(toOpticUnit(r.windageMrad), "R", "L")} ${unit()} = ${s.solution.elevationClicks} / ${s.solution.windageClicks} clicks · press G to dial elevation`;
+    const at = `${s.lastRange.distanceM.toFixed(0)} m`;
+    $("solution").textContent =
+      calc === "elevation"
+        ? `Calculator, ${at}: ${dir(toOpticUnit(r.elevationMrad), "U", "D")} ${unit()} = ${s.solution.elevationClicks} clicks · wind is your call · G dials elevation`
+        : `Calculator, ${at} (shooter's wind): ${dir(toOpticUnit(r.elevationMrad), "U", "D")} · ${dir(toOpticUnit(r.windageMrad), "R", "L")} ${unit()} = ${s.solution.elevationClicks} / ${s.solution.windageClicks} clicks · G dials elevation`;
     $("solution").classList.add("show");
   } catch (e) {
     $("solution").textContent = String((e as Error).message ?? e);
   }
 }
 
+
+// ---------------------------------------------------------------- drills
+
+function startDrill(s: Session, def: DrillDef | null) {
+  $("drill").hidden = !def;
+  s.world.setSignsVisible(def ? def.tools.signs : true);
+  s.world.setMarker(null);
+  if (!def) return;
+  s.drill = new DrillRun(def, s.cond.seed, s.world.targets.map((t) => t.def), s.t);
+  s.shooter.stress = def.stress ?? 0;
+  if (def.offZero) {
+    // Knocked off zero: 0.5–1.2 mrad in a random direction.
+    const a = s.rand.uniform() * Math.PI * 2;
+    const m = 0.5 + s.rand.uniform() * 0.7;
+    s.zeroErr = { x: Math.cos(a) * m, y: Math.sin(a) * m };
+  }
+  enterStage(s);
+}
+
+function enterStage(s: Session) {
+  const st = s.drill?.stage;
+  if (!st) return;
+  if (st.position) {
+    const p = POSITIONS.find((x) => x.id === st.position)!;
+    if (p.id !== s.shooter.position.id) {
+      s.shooter.setPosition(p);
+      s.shooter.stress = Math.min(1, s.shooter.stress + 0.2);
+      message("call", `Move: ${p.name}`, 3);
+    }
+  }
+  const tg = st.targetId ? s.world.targets.find((t) => t.def.id === st.targetId) ?? null : null;
+  s.world.setMarker(tg);
+  if (tg) s.tabletTarget = tg;
+}
+
+function drillShot(s: Session, rec: ShotRecord, tg: TargetObj | null) {
+  const run = s.drill!;
+  const before = run.stageIndex;
+  const half = tg ? (tg.def.sizeM / 2 / tg.def.rangeM) * 1000 : 0.5;
+  const pts = run.shot(rec.targetId, rec.result === "hit", rec.offsetMrad, half);
+  if (pts > 0) message("ranging", `+${pts} points`, 2.5);
+  if (run.done) window.setTimeout(() => endDrill(s), 1600);
+  else if (run.stageIndex !== before) enterStage(s);
+}
+
+function setZero(s: Session) {
+  const cm = clickMrad(s.lo.optic);
+  // Re-index: the dial's correction becomes the new zero, turrets read 0.
+  s.zeroErr = { x: s.zeroErr.x + s.dial.windage * cm, y: s.zeroErr.y + s.dial.elevation * cm };
+  s.dial = { elevation: 0, windage: 0 };
+  s.zeroStopSet = true;
+  message("call", "Zero set: turrets re-indexed to 0, zero stop engaged", 3);
+  if (s.drill?.stage?.kind === "action") {
+    s.drill.action();
+    enterStage(s);
+  }
+}
+
+let resultsOpen = false;
+
+function endDrill(s: Session) {
+  const run = s.drill;
+  if (!run || session !== s || resultsOpen) return;
+  if (!run.done) run.finish("quit");
+  const award: Award = finishDrill(run.def.id, run.points, run.max, run.def.xp);
+  s.world.setMarker(null);
+  resultsOpen = true;
+  document.exitPointerLock();
+  // Biggest error source across this drill's shots.
+  const shots = records.filter((r) => r.session === s.cond.seed && r.drillId === run.def.id).slice(-run.results.length);
+  const totals = new Map<string, number>();
+  for (const r of shots) for (const p of r.breakdown ?? []) totals.set(p.key, (totals.get(p.key) ?? 0) + Math.hypot(p.x, p.y));
+  const worst = [...totals.entries()].sort((a, b) => b[1] - a[1])[0];
+  const labels: Record<string, string> = { hold: "hold / sway", trigger: "trigger", parallax: "parallax", cant: "cant", ammo: "ammunition variation", elevation: "elevation data", wind: "wind calls" };
+  const reason = run.endReason === "time" ? "Time ran out." : run.endReason === "quit" ? "Stopped early." : "Course of fire complete.";
+  const rows = run.results
+    .map((r, i) => {
+      const tg = s.world.targets.find((t) => t.def.id === r.targetId);
+      const off = r.offset ? `${dir(toOpticUnit(r.offset.y), "U", "D", 2)} / ${dir(toOpticUnit(r.offset.x), "R", "L", 2)}` : "–";
+      return `<tr><td>${i + 1}</td><td>${esc(tg?.def.name ?? "No target")}</td><td class="${r.hit ? "hit" : "miss"}">${r.hit ? "Hit" : "Miss"}</td><td>${off}</td><td>${r.points}</td></tr>`;
+    })
+    .join("");
+  $("results-title").textContent = run.def.name;
+  $("results-body").innerHTML = `<p class="results-score">${run.points} / ${run.max}</p>
+    <p>${reason} ${award.newBest ? "<span class='award'>New personal best.</span>" : ""}</p>
+    <p class="award">+${award.xp} XP${award.rankedUp ? ` · Promoted to ${esc(award.rankedUp.name)}!` : ""}</p>
+    ${worst ? `<p>Biggest source of error this run: <b>${esc(labels[worst[0]] ?? worst[0])}</b>.</p>` : ""}
+    <table class="results-table"><thead><tr><th>#</th><th>Target</th><th>Result</th><th>Offset (${unit()})</th><th>Points</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $("results").classList.add("open");
+  $("drill").hidden = true;
+  renderSetup();
+}
+
+function updateDrillHud(s: Session) {
+  const run = s.drill;
+  if (!run) return;
+  run.tick(s.t);
+  if (run.done && !resultsOpen) {
+    endDrill(s);
+    return;
+  }
+  const st = run.stage;
+  if (!st) return;
+  const left = run.timeLeft(s.t);
+  const tg = st.targetId ? s.world.targets.find((t) => t.def.id === st.targetId) : null;
+  // Unknown distance: the plate size is all you get for ranging.
+  const size =
+    tg && !run.def.tools.signs
+      ? ` · plate ${tg.def.sizeM.toFixed(2)} m ${tg.def.shape === "circle" ? "circle" : tg.def.shape === "ipsc" ? "wide" : "square"}`
+      : "";
+  const shotsLine = st.kind === "action" ? "" : ` · shot ${Math.min(run.shotsInStage + 1, st.shots)} of ${st.shots}`;
+  $("drill").innerHTML = `<div class="drill-head"><span>${esc(run.def.name)}</span><span>${run.points} / ${run.max} pts</span>${
+    left !== null ? `<span class="timer ${left < 15 ? "low" : ""}">${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, "0")}</span>` : ""
+  }</div>
+    <div class="drill-brief">Stage ${run.stageIndex + 1} of ${run.stages.length}: ${esc(st.brief)}${shotsLine}${size}</div>
+    <div class="progress"><div style="width:${((run.stageIndex / run.stages.length) * 100).toFixed(0)}%"></div></div>`;
+}
+
+// ---------------------------------------------------------------- range entry (N)
+
+let entering = false;
+
+function openRangeEntry() {
+  entering = true;
+  document.exitPointerLock();
+  const f = $<HTMLFormElement>("range-entry");
+  f.hidden = false;
+  const input = $<HTMLInputElement>("range-input");
+  input.value = session?.lastRange ? session.lastRange.distanceM.toFixed(0) : "";
+  window.setTimeout(() => input.focus(), 0);
+}
+
+function closeRangeEntry() {
+  $<HTMLFormElement>("range-entry").hidden = true;
+  canvas.requestPointerLock();
+  window.setTimeout(() => (entering = false), 300);
+}
+
+$<HTMLFormElement>("range-entry").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const s = session;
+  const d = Number($<HTMLInputElement>("range-input").value);
+  if (s && Number.isFinite(d) && d >= 25 && d <= 3000) {
+    s.lastRange = { distanceM: d, pitch: sightLine(s).pitch };
+    message("ranging", `Calculator set to ${d.toFixed(0)} m`, 4);
+    showSolution();
+  }
+  closeRangeEntry();
+});
+$("range-cancel").addEventListener("click", closeRangeEntry);
+
+$("retry").addEventListener("click", () => {
+  $("results").classList.remove("open");
+  resultsOpen = false;
+  settings.seed = (settings.seed + 1) >>> 0;
+  save(SETTINGS_KEY, settings);
+  renderSetup();
+  startSession();
+  setup.classList.remove("open");
+  hud.hidden = false;
+  canvas.requestPointerLock();
+});
+$("to-setup").addEventListener("click", () => {
+  $("results").classList.remove("open");
+  resultsOpen = false;
+  setup.classList.add("open");
+  $<HTMLButtonElement>("start").textContent = "Go to the range";
+});
 
 // ---------------------------------------------------------------- HUD
 
@@ -746,12 +990,12 @@ function adjustDial(axis: "elevation" | "windage", clicks: number) {
   const cm = clickMrad(o);
   const maxE = Math.floor((o.unit === "mil" ? o.elevationTravel : o.elevationTravel * MRAD_PER_MOA) / cm);
   const maxW = Math.floor((o.unit === "mil" ? o.windageTravel : o.windageTravel * MRAD_PER_MOA) / 2 / cm);
-  if (axis === "elevation") s.dial.elevation = Math.max(o.zeroStop ? 0 : -maxE / 4, Math.min(maxE, s.dial.elevation + clicks));
+  if (axis === "elevation") s.dial.elevation = Math.max(o.zeroStop && s.zeroStopSet ? 0 : -maxE / 2, Math.min(maxE, s.dial.elevation + clicks));
   else s.dial.windage = Math.max(-maxW, Math.min(maxW, s.dial.windage + clicks));
 }
 
 document.addEventListener("keydown", (e) => {
-  if (!session || setup.classList.contains("open")) return;
+  if (!session || setup.classList.contains("open") || entering || resultsOpen) return;
   const s = session;
   keys.add(e.code);
   const step = e.ctrlKey ? 10 : 1;
@@ -805,6 +1049,12 @@ document.addEventListener("keydown", (e) => {
     case "KeyB":
       startReplay(s);
       break;
+    case "KeyK":
+      setZero(s);
+      break;
+    case "KeyN":
+      openRangeEntry();
+      break;
     case "KeyX":
       if (s.rounds < s.capacity) {
         s.nextReadyT = s.t + 3;
@@ -844,7 +1094,7 @@ document.addEventListener("pointerlockchange", () => {
   if (document.pointerLockElement === canvas) {
     setup.classList.remove("open");
     hud.hidden = false;
-  } else {
+  } else if (!entering && !resultsOpen) {
     setup.classList.add("open");
     $<HTMLButtonElement>("start").textContent = "Resume";
   }
@@ -876,6 +1126,7 @@ document.addEventListener(
 $("start").addEventListener("click", () => {
   audio.resume();
   const resume = session && $<HTMLButtonElement>("start").textContent === "Resume" && !$("setup-note").textContent;
+  if (session?.drill && !session.drill.done && !resume) session.drill.finish("quit");
   if (!resume) startSession();
   $("setup-note").textContent = "";
   setup.classList.remove("open");
@@ -953,6 +1204,7 @@ function frame(now: number) {
     s.barrelTempC += (s.cond.atmosphere.temperatureC - s.barrelTempC) * Math.min(1, dt / 240);
   }
   s.world.update(s.t, (down) => s.sampler.at(down, s.t));
+  if (!paused && !entering) updateDrillHud(s);
 
   // With the log open, render beside it so the scope stays centred on the line of sight.
   const full = window.innerWidth;

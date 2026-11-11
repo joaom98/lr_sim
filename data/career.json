@@ -1,0 +1,17 @@
+{
+  "$comment": "Career progression rules. XP comes from drill scores (score fraction x drill xp). A rank unlocks the listed rifles, optics and drills; everything from lower ranks stays unlocked. Free range ignores locks.",
+  "ranks": [
+    { "id": "novice", "name": "Novice", "xp": 0,
+      "unlocks": { "rifles": ["bolt-308", "prs-65", "rimfire-22"], "optics": ["ffp-mil-4-16", "sfp-moa-3-15"],
+                   "drills": ["zeroing", "cold-bore", "kd-ladder"] } },
+    { "id": "marksman", "name": "Marksman", "xp": 300,
+      "unlocks": { "rifles": ["prs-6", "semi-308"], "optics": ["ffp-mil-5-25", "ffp-moa-5-25"],
+                   "drills": ["wind-reading", "unknown-distance"] } },
+    { "id": "sharpshooter", "name": "Sharpshooter", "xp": 900,
+      "unlocks": { "rifles": ["mag-300"], "optics": [], "drills": ["prs-stage"] } },
+    { "id": "expert", "name": "Expert", "xp": 2000,
+      "unlocks": { "rifles": ["mag-338"], "optics": [], "drills": ["elr"] } },
+    { "id": "master", "name": "Master", "xp": 4000,
+      "unlocks": { "rifles": ["amr-50"], "optics": [], "drills": [] } }
+  ]
+}

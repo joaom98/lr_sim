@@ -11,10 +11,13 @@
     <canvas id="overlay"></canvas>
 
     <div id="hud" hidden>
-      <section class="hud-card hud-tl" aria-label="Weather meter">
-        <h2>Weather meter</h2>
-        <dl id="kestrel"></dl>
-      </section>
+      <div class="hud-left">
+        <section class="hud-card" aria-label="Weather meter">
+          <h2>Weather meter</h2>
+          <dl id="kestrel"></dl>
+        </section>
+        <section id="drill" class="hud-card hud-drill" aria-label="Drill" hidden></section>
+      </div>
       <section class="hud-card hud-tr" aria-label="Scope">
         <h2 id="scope-name">Scope</h2>
         <dl id="turrets"></dl>
@@ -44,12 +47,24 @@
           <h1>Long Range Simulator</h1>
           <a href="./" class="link">Ballistic calculator</a>
         </header>
-        <form id="setup-form" class="setup-grid"></form>
+        <section id="career" class="career" aria-label="Career"></section>
+        <section aria-labelledby="modes-title">
+          <h2 id="modes-title" class="section-title">Mode</h2>
+          <div id="modes" class="modes" role="radiogroup" aria-labelledby="modes-title"></div>
+        </section>
+        <section aria-labelledby="loadout-title">
+          <h2 id="loadout-title" class="section-title">Loadout and conditions</h2>
+          <form id="setup-form" class="setup-grid"></form>
+        </section>
         <div class="setup-actions">
           <button type="button" id="start">Go to the range</button>
           <span id="setup-note" class="note"></span>
         </div>
-        <details class="controls" open>
+        <details class="stats-box">
+          <summary>Your statistics</summary>
+          <div id="stats"></div>
+        </details>
+        <details class="controls">
           <summary>Controls</summary>
           <dl>
             <div><dt>Mouse</dt><dd>Aim (click the view to capture the mouse)</dd></div>
@@ -60,6 +75,8 @@
             <div><dt>Z</dt><dd>Turrets back to zero</dd></div>
             <div><dt>Space (hold)</dt><dd>Hold breath. Best fired in the natural pause after exhaling</dd></div>
             <div><dt>R</dt><dd>Laser rangefinder</dd></div>
+            <div><dt>N</dt><dd>Type a distance into the calculator (for mil-ranging)</dd></div>
+            <div><dt>K</dt><dd>Set zero: re-index the turrets to the current dial</dd></div>
             <div><dt>G</dt><dd>Dial the calculator's elevation for the last ranged distance</dd></div>
             <div><dt>1–6</dt><dd>Shooting position</dd></div>
             <div><dt>X</dt><dd>Reload magazine</dd></div>
@@ -75,6 +92,24 @@
         </details>
       </div>
     </div>
+    <div id="results" class="setup" role="dialog" aria-modal="true" aria-labelledby="results-title">
+      <div class="setup-card">
+        <h1 id="results-title">Drill complete</h1>
+        <div id="results-body"></div>
+        <div class="setup-actions">
+          <button type="button" id="retry">Shoot it again</button>
+          <button type="button" id="to-setup" class="ghost-btn">Back to the menu</button>
+        </div>
+      </div>
+    </div>
+
+    <form id="range-entry" class="range-entry" hidden>
+      <label for="range-input">Distance for the calculator (m)</label>
+      <input id="range-input" type="number" min="25" max="3000" step="1" required>
+      <div><button type="submit">Use</button> <button type="button" id="range-cancel" class="ghost-btn">Cancel</button></div>
+      <p class="note">Mil-ranging: distance (m) = target size (m) × 1000 ÷ size in mils</p>
+    </form>
+
     <script type="module" src="/src/range/main.ts"></script>
   </body>
 </html>

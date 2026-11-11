@@ -58,6 +58,28 @@ Range layouts live in `data/ranges.json`; each target sits on its own bearing so
 - **Bullet cam:** `B` replays the last shot at 0.2× from behind the bullet
 - Shot records now include the cant and the error breakdown
 
+## Drills and career (milestone 4)
+
+Pick a mode on the range menu. Free range is a sandbox; drills score you and earn XP.
+
+| Drill | What it trains |
+|---|---|
+| Zero the rifle | Scope starts 0.5–1.2 mil off. Group, dial the correction, set zero (`K`), confirm |
+| Cold bore | One shot, no sighters, 300–700 m |
+| Known-distance ladder | 300 → 1000 m, two rounds per plate |
+| Wind reading | Calculator gives elevation only; call the wind from flags and mirage |
+| Unknown distance | No rangefinder, no signs: mil-range the plate, type the range (`N`) |
+| PRS-style stage | 105 s, eight plates, forced move from prone to barricade, raised heart rate |
+| Extreme long range | 1000 / 1200 / 1500 m, three rounds per plate |
+
+- **Career** (`data/career.json`): XP scales with the score; five ranks from Novice to Master
+  unlock rifles, scopes and harder drills. Locks apply in drills only.
+- **Statistics:** lifetime hit rate by distance band and your most common error source,
+  computed from the shot records.
+- The laser rangefinder now models a ~1.5 × 0.8 mrad beam and reports steel in the beam
+  ahead of ground behind it.
+- Storage keys: `lrs.shots.v1` (shots, incl. `drillId`), `lrs.career.v1` (XP, best scores).
+
 ## Requirements
 
 - Rust (stable) with the `wasm32-unknown-unknown` target

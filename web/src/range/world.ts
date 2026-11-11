@@ -175,6 +175,25 @@ function textSprite(text: string): THREE.Sprite {
   return s;
 }
 
+function markerSprite(): THREE.Sprite {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#ff7a1a";
+  g.strokeStyle = "#2a1200";
+  g.lineWidth = 4;
+  g.beginPath();
+  g.moveTo(8, 10);
+  g.lineTo(56, 10);
+  g.lineTo(32, 56);
+  g.closePath();
+  g.fill();
+  g.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, fog: true, depthWrite: false }));
+}
+
 function softDot(): THREE.CanvasTexture {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
@@ -198,6 +217,8 @@ export class World {
   private tracers: Tracer[] = [];
   private dot = softDot();
   private flashes: { sprite: THREE.Sprite; born: number }[] = [];
+  private signs: THREE.Sprite[] = [];
+  private marker: THREE.Sprite;
 
   constructor(readonly range: RangeDef, humidity: number) {
     this.buildSky(humidity);
@@ -205,6 +226,22 @@ export class World {
     this.buildTargets();
     this.buildFlags();
     this.buildTrees();
+    this.marker = markerSprite();
+    this.marker.visible = false;
+    this.scene.add(this.marker);
+  }
+
+  /** Point out the current drill target with a marker above it (null hides it). */
+  setMarker(tg: TargetObj | null) {
+    this.marker.visible = !!tg;
+    if (!tg) return;
+    const size = 0.22 + (tg.def.rangeM / 1500) * 0.5;
+    this.marker.scale.set(size, size, 1);
+    this.marker.position.copy(tg.center).add(new THREE.Vector3(0, tg.halfHeight + 0.3 + size, 0));
+  }
+
+  setSignsVisible(v: boolean) {
+    for (const sg of this.signs) sg.visible = v;
   }
 
   private buildSky(humidity: number) {
@@ -349,6 +386,7 @@ export class World {
       const outer = def.rightM < 0 ? -1 : 1;
       sign.position.set(outer * (width / 2 + 0.3 + 0.25 * signScale), -def.standM + 0.13 * signScale, 0.05);
       group.add(sign);
+      this.signs.push(sign);
 
       this.scene.add(group);
       group.updateMatrixWorld(true);
