@@ -41,6 +41,8 @@ export interface ScopeDraw {
   eyeOffset: { x: number; y: number };
   /** 0..1 dims the image (low light) */
   dim: number;
+  /** rifle cant (deg, + clockwise) for the bubble level */
+  cantDeg: number;
 }
 
 export function drawScope(g: CanvasRenderingContext2D, w: number, h: number, L: ScopeLayout, s: ScopeDraw) {
@@ -90,6 +92,37 @@ export function drawScope(g: CanvasRenderingContext2D, w: number, h: number, L: 
   if (s.dim > 0) {
     g.fillStyle = `rgba(0,0,0,${s.dim})`;
     g.fill();
+  }
+  g.restore();
+  // Above the eyepiece: the bottom of the screen carries the spotter and calculator messages.
+  drawLevel(g, cx, Math.max(14, cy - r - 4), s.cantDeg);
+}
+
+/** Scope-mounted bubble level. The bubble floats to the high side, opposite the cant. */
+function drawLevel(g: CanvasRenderingContext2D, cx: number, cy: number, cantDeg: number) {
+  const w = 132;
+  const h = 18;
+  g.save();
+  g.fillStyle = "rgba(20,24,20,0.9)";
+  g.strokeStyle = "rgba(200,200,190,0.6)";
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.roundRect(cx - w / 2, cy - h / 2, w, h, h / 2);
+  g.fill();
+  g.stroke();
+  const level = Math.abs(cantDeg) < 0.35;
+  const off = Math.max(-1, Math.min(1, -cantDeg / 3)) * (w / 2 - 12);
+  g.fillStyle = level ? "rgba(150,230,120,0.95)" : "rgba(235,225,140,0.95)";
+  g.beginPath();
+  g.ellipse(cx + off, cy, 9, 6, 0, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = "rgba(230,230,220,0.8)";
+  g.lineWidth = 1.2;
+  for (const dx of [-11, 11]) {
+    g.beginPath();
+    g.moveTo(cx + dx, cy - h / 2 + 2);
+    g.lineTo(cx + dx, cy + h / 2 - 2);
+    g.stroke();
   }
   g.restore();
 }

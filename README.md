@@ -43,6 +43,21 @@ shot is flown by the engine:
 
 Range layouts live in `data/ranges.json`; each target sits on its own bearing so none hides another.
 
+## Learning from every shot (milestone 3)
+
+- **Why did I miss?** Every shot aimed at a target is re-flown with one error removed at a
+  time, splitting the miss exactly into hold/sway, trigger, parallax, cant, ammo variation,
+  elevation data and wind call (`web/src/range/analysis.ts`). The parts sum to the real miss.
+- **Coaching:** one hint per shot about the biggest error (breathing, trigger, cant, wind…)
+- **Cant:** each position leaves a small unnoticed cant; the view rolls, a bubble level sits
+  above the eyepiece, Q / E levels the rifle, and the engine flies the canted shot
+- **Parallax:** side-focus knob (`[` / `]`). Wrong focus blurs the picture and lets head
+  movement in the eye box shift the point of aim
+- **Mirage:** heat shimmer that runs with the crosswind near the focus distance, boils in calm
+  air and flattens in strong wind; stronger on hot, dry days and at high magnification
+- **Bullet cam:** `B` replays the last shot at 0.2× from behind the bullet
+- Shot records now include the cant and the error breakdown
+
 ## Requirements
 
 - Rust (stable) with the `wasm32-unknown-unknown` target

@@ -42,8 +42,12 @@ button, select, input { font: inherit; color: inherit; }
 .hud-msg > div.show { opacity: 1; }
 #call { font-size: 1.05rem; font-weight: 600; }
 #solution { font-size: 0.85rem; color: var(--text-2); }
+#coach { font-size: 0.9rem; max-width: 560px; border-color: rgba(57, 135, 229, 0.5); }
+#replay { font-weight: 600; }
+#shots li .why { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; font-size: 0.74rem; color: var(--text-3); }
+#shots li .why b { color: var(--text-2); font-weight: 600; }
 
-.hud-log { right: 12px; top: 140px; bottom: 12px; width: 268px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.hud-log { right: 12px; top: 190px; bottom: 12px; width: 268px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
 .hud-log.collapsed { display: none; }
 #tablet { width: 240px; height: 240px; border-radius: 6px; align-self: center; }
 #group-line { font-size: 0.78rem; color: var(--text-2); min-height: 1em; }

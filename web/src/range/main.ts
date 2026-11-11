@@ -11,6 +11,8 @@ import { drawNakedEye, drawScope, NAKED_EYE_FOV_DEG, scopeLayout } from "./scope
 import { POSITIONS, Shooter } from "./shooter";
 import { groundHeight } from "./terrain";
 import { World, type TargetObj } from "./world";
+import { analyzeShot, coach, type Breakdown, type ShotContext } from "./analysis";
+import { heatFactor, MiragePass } from "./mirage";
 
 // ---------------------------------------------------------------- settings & records
 
@@ -44,7 +46,16 @@ export interface ShotRecord {
   energyJ: number;
   heldBreath: boolean;
   inPause: boolean;
+  /** rifle cant when fired (deg) */
+  cantDeg?: number;
+  /** what moved the shot (mrad per source), when it was aimed at a target */
+  breakdown?: { key: string; x: number; y: number }[];
 }
+
+/** Parallax settings on the side focus knob (m); the last is infinity. */
+const PARALLAX_STEPS = [25, 50, 75, 100, 150, 200, 300, 400, 500, 600, 800, 1000, 1500, 1e9];
+/** Parallax shift (mrad) per unit of eye offset per (1/m) of focus error. */
+const PARALLAX_K = 45;
 
 const SETTINGS_KEY = "lrs.range.settings.v1";
 const RECORDS_KEY = "lrs.shots.v1";
@@ -157,6 +168,13 @@ interface Session {
   solution?: { elevationClicks: number; windageClicks: number };
   speedOfSound: number;
   densityAltitudeM: number;
+  parallaxIdx: number;
+  /** distance to whatever is under the reticle, refreshed a few times a second */
+  focusM: number;
+  focusAt: number;
+  heat: number;
+  lastFlight: { path: THREE.Vector3[]; times: number[] } | null;
+  replay: { t: number; bullet: THREE.Mesh } | null;
 }
 
 let engine: Engine;
@@ -235,6 +253,12 @@ function startSession() {
     rand: new Rand(settings.seed * 7919 + 1),
     speedOfSound: info.speedOfSoundMps,
     densityAltitudeM: info.densityAltitudeM,
+    parallaxIdx: PARALLAX_STEPS.indexOf(100),
+    focusM: 100,
+    focusAt: -1,
+    heat: heatFactor(cond.atmosphere.temperatureC, cond.atmosphere.humidity),
+    lastFlight: null,
+    replay: null,
   };
   $("scope-name").textContent = lo.optic.name;
   log.innerHTML = "";
@@ -266,6 +290,43 @@ function message(id: string, text: string, seconds: number) {
 function sightLine(s: Session) {
   const off = s.shooter.offset();
   return { yaw: s.aimYaw + off.x / 1000, pitch: s.aimPitch + off.y / 1000 };
+}
+
+const parallaxM = (s: Session) => PARALLAX_STEPS[s.parallaxIdx];
+
+/** How far the target image sits from the reticle because of focus error (mrad, x right, y up).
+ *  Zero when parallax is set to the distance of what is under the reticle, or the eye is centred. */
+function parallaxShift(s: Session): { x: number; y: number } {
+  if (!s.scoped) return { x: 0, y: 0 };
+  const e = s.shooter.eyeOffset();
+  const k = PARALLAX_K * (1 / parallaxM(s) - 1 / s.focusM);
+  return { x: e.x * k, y: -e.y * k };
+}
+
+/** Distance along a sight line to the first target plate or the ground (m). */
+function losDistance(s: Session, yaw: number, pitch: number): number {
+  const eyeY = s.shooter.position.eyeHeightM + groundHeight(0, 0);
+  const origin = new THREE.Vector3(0, eyeY, 0);
+  const d = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+  let best = 3000;
+  for (const tg of s.world.targets) {
+    const denom = d.dot(tg.normal);
+    if (denom >= 0) continue;
+    const dist = origin.clone().sub(tg.center).dot(tg.normal) / -denom;
+    const p = d.clone().multiplyScalar(dist).add(origin).sub(tg.center);
+    if (Math.abs(p.dot(tg.right)) < tg.def.sizeM && Math.abs(p.y) < tg.halfHeight * 1.5) best = Math.min(best, dist);
+  }
+  for (let r = 4; r < best; r += r < 200 ? 2 : 8) {
+    if (eyeY + d.y * r < groundHeight(-d.z * r, d.x * r)) return r;
+  }
+  return best;
+}
+
+function aimAt(tg: TargetObj, eye: number): { yaw: number; pitch: number } {
+  return {
+    yaw: Math.atan2(tg.center.x, -tg.center.z),
+    pitch: Math.atan2(tg.center.y - eye, Math.hypot(tg.center.x, tg.center.z)),
+  };
 }
 
 /** The target closest to where the rifle points (angularly). */
@@ -303,8 +364,12 @@ function shoot() {
   const coldBore = s.shots === 0 ? -2.5 : 0;
   const mvDelta = s.rand.normal() * lo.ammo.mvSdMps + heat * 0.08 + coldBore;
   const bcScale = 1 + s.rand.normal() * lo.ammo.bcSdFraction;
-  const aim = { yaw: line.yaw, pitch: line.pitch, eyeHeightM: eye };
-  const intended = intendedTarget(s, line.yaw, line.pitch, eye);
+  const cantDeg = s.shooter.cantDeg;
+  const aim = { yaw: line.yaw, pitch: line.pitch, eyeHeightM: eye, cantDeg };
+  // Where the reticle appeared to be: the rifle's line plus any parallax shift of the image.
+  const shift = parallaxShift(s);
+  const visual = { yaw: line.yaw + shift.x / 1000, pitch: line.pitch + shift.y / 1000 };
+  const intended = intendedTarget(s, visual.yaw, visual.pitch, eye);
   let out: ShotOutcome;
   try {
     out = fire(engine, lo, s.cond, aim, s.dial, { mvDeltaMps: mvDelta, bcScale, timeS: s.t, errX: err.x, errY: err.y }, s.world.targets);
@@ -325,7 +390,23 @@ function shoot() {
   const inPause = s.shooter.inRespiratoryPause;
   const dialMrad = { elevation: s.dial.elevation * clickMrad(lo.optic), windage: s.dial.windage * clickMrad(lo.optic) };
   const shotNo = s.shots;
-  s.world.launch(out.path, out.times, s.t, 0.12 + humidity * 0.35, () => resolveImpact(s, shotNo, out, intended, dialMrad, heldBreath, inPause));
+  const ctx: ShotContext | null = intended
+    ? {
+        aim,
+        visualAim: { ...aim, ...visual },
+        intendedAim: { ...aim, ...aimAt(intended, eye) },
+        dial: { ...s.dial },
+        mvDeltaMps: mvDelta,
+        bcScale,
+        timeS: s.t,
+        trigger: err,
+      }
+    : null;
+  const coachInfo = { holdTimeS: s.shooter.holdTime, cantDeg, parallaxM: parallaxM(s) };
+  s.lastFlight = { path: out.path, times: out.times };
+  s.world.launch(out.path, out.times, s.t, 0.12 + humidity * 0.35, () =>
+    resolveImpact(s, shotNo, out, intended, dialMrad, heldBreath, inPause, ctx, coachInfo),
+  );
 }
 
 function resolveImpact(
@@ -336,6 +417,8 @@ function resolveImpact(
   dialMrad: { elevation: number; windage: number },
   heldBreath: boolean,
   inPause: boolean,
+  ctx: ShotContext | null,
+  coachInfo: { holdTimeS: number; cantDeg: number; parallaxM: number },
 ) {
   if (session !== s) return;
   const dist = out.point.length();
@@ -374,7 +457,32 @@ function resolveImpact(
   } else {
     call = `Miss ${tg.def.name}: ${dir(toOpticUnit(offset.y), "high", "low")}, ${dir(toOpticUnit(offset.x), "right", "left")} ${unit()}`;
   }
-  window.setTimeout(() => message("call", call, 5), Math.min(1500, 250 + soundDelay * 1000 * 0.3));
+  const callDelay = Math.min(1500, 250 + soundDelay * 1000 * 0.3);
+  window.setTimeout(() => message("call", call, 5), callDelay);
+
+  // Why the shot went there, and one thing to work on.
+  let breakdown: Breakdown | null = null;
+  if (ctx && intended) {
+    try {
+      breakdown = analyzeShot(engine, s.lo, s.cond, intended, ctx);
+    } catch {
+      breakdown = null;
+    }
+  }
+  if (breakdown && intended) {
+    const tip = coach({
+      breakdown,
+      hit: result === "hit",
+      inPause,
+      heldBreath,
+      holdTimeS: coachInfo.holdTimeS,
+      cantDeg: coachInfo.cantDeg,
+      parallaxM: coachInfo.parallaxM,
+      targetRangeM: intended.def.rangeM,
+      fmt: (mrad) => `${toOpticUnit(mrad).toFixed(digits() + 1)} ${unit()}`,
+    });
+    window.setTimeout(() => message("coach", tip, 9), callDelay + 400);
+  }
 
   if (tg && offset) {
     const list = s.impacts.get(tg.def.id) ?? [];
@@ -401,15 +509,17 @@ function resolveImpact(
     energyJ: out.energyJ,
     heldBreath,
     inPause,
+    cantDeg: coachInfo.cantDeg,
+    breakdown: breakdown?.parts.map((p) => ({ key: p.key, x: +p.x.toFixed(4), y: +p.y.toFixed(4) })),
   };
   records.push(rec);
   if (records.length > 1000) records.splice(0, records.length - 1000);
   save(RECORDS_KEY, records);
-  addLogRow(rec, tg);
+  addLogRow(rec, tg, breakdown);
   drawTablet(s);
 }
 
-function addLogRow(r: ShotRecord, tg: TargetObj | null) {
+function addLogRow(r: ShotRecord, tg: TargetObj | null, b: Breakdown | null) {
   const li = document.createElement("li");
   li.className = r.result;
   const off = r.offsetMrad
@@ -417,6 +527,26 @@ function addLogRow(r: ShotRecord, tg: TargetObj | null) {
     : "n/a";
   li.innerHTML = `<b>#${r.shot}</b> ${esc(tg?.def.name ?? "No target")} · <span class="res">${r.result.toUpperCase()}</span><br>
     <span>${off} ${unit()} · ToF ${r.timeOfFlightS.toFixed(2)} s · ${Math.round(r.impactVelocityMps)} m/s · ${Math.round(r.energyJ)} J${r.inPause ? " · pause" : r.heldBreath ? " · held" : ""}</span>`;
+  if (b) {
+    // Biggest contributors first; tiny ones are left out.
+    const size = (p: { x: number; y: number }) => Math.hypot(p.x, p.y);
+    const parts = b.parts.filter((p) => size(p) >= 0.02).sort((a, c) => size(c) - size(a));
+    const fmtPart = (p: { x: number; y: number }) => {
+      const out: string[] = [];
+      if (Math.abs(p.y) >= 0.02) out.push(dir(toOpticUnit(p.y), "U", "D", 2));
+      if (Math.abs(p.x) >= 0.02) out.push(dir(toOpticUnit(p.x), "R", "L", 2));
+      return out.join(" ");
+    };
+    const div = document.createElement("div");
+    div.className = "why";
+    div.innerHTML = parts.length
+      ? parts
+          .slice(0, 4)
+          .map((p) => `<span>${esc(p.label)} <b>${fmtPart(p)}</b></span>`)
+          .join("")
+      : "<span>Every error under 0.02 mrad</span>";
+    li.append(div);
+  }
   log.prepend(li);
 }
 
@@ -594,6 +724,11 @@ function updateHud(s: Session, dt: number) {
     ["Elevation", `${dir(toOpticUnit(s.dial.elevation * cm), "U", "D")} ${unit()} (${s.dial.elevation})`],
     ["Windage", `${dir(toOpticUnit(s.dial.windage * cm), "R", "L")} ${unit()} (${s.dial.windage})`],
     ["Magnification", s.scoped ? `${s.mag}x ${s.lo.optic.focalPlane.toUpperCase()}` : "Naked eye"],
+    ["Parallax", parallaxM(s) >= 1e5 ? "∞" : `${parallaxM(s)} m`],
+    [
+      "Cant",
+      `${Math.abs(s.shooter.cantDeg).toFixed(1)}° ${Math.abs(s.shooter.cantDeg) < 0.35 ? "level" : s.shooter.cantDeg > 0 ? "right" : "left"}`,
+    ],
   ]);
   $("shooter").innerHTML = dl([
     ["Position", s.shooter.position.name],
@@ -654,6 +789,21 @@ document.addEventListener("keydown", (e) => {
       break;
     case "KeyI":
       s.illum = !s.illum;
+      break;
+    case "KeyQ":
+      s.shooter.adjustCant(-0.25);
+      break;
+    case "KeyE":
+      s.shooter.adjustCant(0.25);
+      break;
+    case "BracketLeft":
+      s.parallaxIdx = Math.max(0, s.parallaxIdx - 1);
+      break;
+    case "BracketRight":
+      s.parallaxIdx = Math.min(PARALLAX_STEPS.length - 1, s.parallaxIdx + 1);
+      break;
+    case "KeyB":
+      startReplay(s);
       break;
     case "KeyX":
       if (s.rounds < s.capacity) {
@@ -735,6 +885,60 @@ $("start").addEventListener("click", () => {
 
 // ---------------------------------------------------------------- loop
 
+// ---------------------------------------------------------------- bullet cam
+
+const REPLAY_SPEED = 0.2;
+
+function startReplay(s: Session) {
+  if (!s.lastFlight) {
+    message("call", "No shot to replay yet", 2);
+    return;
+  }
+  if (s.replay) return;
+  const bullet = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.004, 0.004, 0.032, 10).rotateX(Math.PI / 2),
+    new THREE.MeshLambertMaterial({ color: 0xb87333, emissive: 0x402010 }),
+  );
+  s.world.scene.add(bullet);
+  s.replay = { t: 0, bullet };
+}
+
+/** Follows the last shot at a fifth of real speed. Returns false when the replay has ended. */
+function replayFrame(s: Session, dt: number): boolean {
+  const r = s.replay!;
+  const f = s.lastFlight!;
+  r.t += dt * REPLAY_SPEED;
+  const end = f.times[f.times.length - 1];
+  if (r.t > end + 0.15) {
+    s.world.scene.remove(r.bullet);
+    r.bullet.geometry.dispose();
+    s.replay = null;
+    $("replay").classList.remove("show");
+    return false;
+  }
+  const t = Math.min(r.t, end);
+  let k = 1;
+  while (k < f.times.length - 1 && f.times[k] < t) k++;
+  const a = f.path[k - 1];
+  const b = f.path[k];
+  const u = (t - f.times[k - 1]) / Math.max(1e-6, f.times[k] - f.times[k - 1]);
+  const pos = a.clone().lerp(b, Math.min(1, u));
+  const dirv = b.clone().sub(a).normalize();
+  r.bullet.position.copy(pos);
+  r.bullet.lookAt(pos.clone().add(dirv));
+  const back = Math.min(2.2, 0.4 + pos.length() * 0.01);
+  camera.position.copy(pos).addScaledVector(dirv, -back).add(new THREE.Vector3(0.05, 0.06, 0));
+  camera.lookAt(pos.clone().addScaledVector(dirv, 25));
+  camera.fov = 40;
+  camera.updateProjectionMatrix();
+  const speed = b.distanceTo(a) / Math.max(1e-6, f.times[k] - f.times[k - 1]);
+  $("replay").textContent = `Bullet cam ×${REPLAY_SPEED} · ${(-pos.z).toFixed(0)} m · ${speed.toFixed(0)} m/s · ${t.toFixed(2)} s`;
+  $("replay").classList.add("show");
+  return true;
+}
+
+const mirage = new MiragePass();
+
 let last = performance.now();
 function frame(now: number) {
   requestAnimationFrame(frame);
@@ -759,15 +963,54 @@ function frame(now: number) {
   camera.aspect = w / h;
   const eye = s.shooter.position.eyeHeightM;
   const line = sightLine(s);
+
+  if (s.replay && replayFrame(s, dt)) {
+    canvas.style.filter = "";
+    renderer.render(s.world.scene, camera);
+    og.clearRect(0, 0, full, h);
+    updateHud(s, dt);
+    return;
+  }
+
+  // What is under the reticle, for parallax and mirage.
+  if (s.t - s.focusAt > 0.25 || s.focusAt < 0) {
+    s.focusM = losDistance(s, line.yaw, line.pitch);
+    s.focusAt = s.t;
+  }
+  const shift = parallaxShift(s);
   camera.position.set(0, eye + groundHeight(0, 0), 0);
-  camera.rotation.set(line.pitch, -line.yaw, 0);
+  const roll = s.scoped ? -(s.shooter.cantDeg * Math.PI) / 180 : 0;
+  camera.rotation.set(line.pitch + shift.y / 1000, -(line.yaw + shift.x / 1000), roll);
   if (s.scoped) {
     const L = scopeLayout(w, h, s.mag);
     camera.fov = L.cameraFovDeg;
     camera.updateProjectionMatrix();
-    renderer.render(s.world.scene, camera);
-    drawScope(og, w, h, L, { optic: s.lo.optic, mag: s.mag, illuminated: s.illum, eyeOffset: s.shooter.eyeOffset(), dim: 0 });
+    // Out-of-focus image when the parallax knob is far from the distance being viewed.
+    const defocus = Math.abs(1 / parallaxM(s) - 1 / s.focusM) * s.mag * 55;
+    canvas.style.filter = defocus > 0.35 ? `blur(${Math.min(5, defocus).toFixed(2)}px)` : "";
+    // Mirage runs with the crosswind around the distance in focus; strong wind flattens it.
+    const [, cross] = s.sampler.at(Math.min(1500, s.focusM * 0.7), s.t);
+    const flatten = 1 - Math.min(0.85, Math.max(0, (Math.abs(cross) - 4) / 5));
+    const strengthPx = s.heat * (s.mag / 12) * 1.8 * flatten;
+    if (strengthPx > 0.05) {
+      const driftPxPerS = (cross / Math.max(50, s.focusM)) * 1000 * L.pxPerMrad * 0.45;
+      mirage.render(renderer, s.world.scene, camera, w, h, {
+        time: s.t,
+        strengthPx,
+        driftPxPerS,
+        boil: Math.max(0, 1 - Math.abs(cross) / 1.5),
+      });
+    } else renderer.render(s.world.scene, camera);
+    drawScope(og, w, h, L, {
+      optic: s.lo.optic,
+      mag: s.mag,
+      illuminated: s.illum,
+      eyeOffset: s.shooter.eyeOffset(),
+      dim: 0,
+      cantDeg: s.shooter.cantDeg,
+    });
   } else {
+    canvas.style.filter = "";
     camera.fov = NAKED_EYE_FOV_DEG;
     camera.updateProjectionMatrix();
     renderer.render(s.world.scene, camera);
@@ -805,6 +1048,7 @@ if (import.meta.env.DEV) {
     shoot,
     rangefind,
     adjustDial,
+    startReplay: () => session && startReplay(session),
     camera,
   };
 }

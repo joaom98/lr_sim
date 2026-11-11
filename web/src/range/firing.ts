@@ -20,6 +20,8 @@ export interface Aim {
   /** sight-line pitch, rad (+ = up) */
   pitch: number;
   eyeHeightM: number;
+  /** rifle cant, deg clockwise */
+  cantDeg?: number;
 }
 
 export interface Dial {
@@ -53,7 +55,7 @@ export function buildInput(lo: Loadout, c: Conditions, aim: Aim): ShotInput {
     lookAngleDeg: (aim.pitch * 180) / Math.PI,
     azimuthDeg: azimuth,
     latitudeDeg: c.range.latitudeDeg,
-    cantDeg: 0,
+    cantDeg: aim.cantDeg ?? 0,
   };
 }
 

@@ -21,15 +21,19 @@ export interface PositionDef {
   recoil: number;
   /** eye height above the ground (m) */
   eyeHeightM: number;
+  /** typical unnoticed rifle cant when settling into the position (deg, 1 SD) */
+  cantSd: number;
+  /** head movement in the eye box (fraction of the eye box, amplitude) */
+  head: number;
 }
 
 export const POSITIONS: PositionDef[] = [
-  { id: "prone-bag", name: "Prone, bipod + rear bag", key: "1", sway: 0.05, breath: 0.45, pulse: 0.025, trigger: 0.03, recoil: 0.8, eyeHeightM: 0.32 },
-  { id: "prone", name: "Prone, bipod", key: "2", sway: 0.14, breath: 0.8, pulse: 0.05, trigger: 0.06, recoil: 1, eyeHeightM: 0.32 },
-  { id: "sitting", name: "Sitting, tripod", key: "3", sway: 0.35, breath: 1.1, pulse: 0.08, trigger: 0.1, recoil: 1.3, eyeHeightM: 0.95 },
-  { id: "barricade", name: "Barricade, supported", key: "4", sway: 0.5, breath: 1.2, pulse: 0.1, trigger: 0.14, recoil: 1.5, eyeHeightM: 1.4 },
-  { id: "kneeling", name: "Kneeling, sling", key: "5", sway: 1.1, breath: 1.8, pulse: 0.18, trigger: 0.25, recoil: 1.8, eyeHeightM: 0.85 },
-  { id: "standing", name: "Standing, unsupported", key: "6", sway: 2.6, breath: 2.6, pulse: 0.3, trigger: 0.45, recoil: 2.2, eyeHeightM: 1.6 },
+  { id: "prone-bag", name: "Prone, bipod + rear bag", key: "1", sway: 0.05, breath: 0.45, pulse: 0.025, trigger: 0.03, recoil: 0.8, eyeHeightM: 0.32, cantSd: 0.4, head: 0.12 },
+  { id: "prone", name: "Prone, bipod", key: "2", sway: 0.14, breath: 0.8, pulse: 0.05, trigger: 0.06, recoil: 1, eyeHeightM: 0.32, cantSd: 0.8, head: 0.18 },
+  { id: "sitting", name: "Sitting, tripod", key: "3", sway: 0.35, breath: 1.1, pulse: 0.08, trigger: 0.1, recoil: 1.3, eyeHeightM: 0.95, cantSd: 1.5, head: 0.28 },
+  { id: "barricade", name: "Barricade, supported", key: "4", sway: 0.5, breath: 1.2, pulse: 0.1, trigger: 0.14, recoil: 1.5, eyeHeightM: 1.4, cantSd: 2.5, head: 0.3 },
+  { id: "kneeling", name: "Kneeling, sling", key: "5", sway: 1.1, breath: 1.8, pulse: 0.18, trigger: 0.25, recoil: 1.8, eyeHeightM: 0.85, cantSd: 2.0, head: 0.4 },
+  { id: "standing", name: "Standing, unsupported", key: "6", sway: 2.6, breath: 2.6, pulse: 0.3, trigger: 0.45, recoil: 2.2, eyeHeightM: 1.6, cantSd: 3.0, head: 0.55 },
 ];
 
 export const BREATH_PERIOD_S = 4.8;
@@ -60,9 +64,20 @@ export class Shooter {
   private rand = new Rand(7);
   private phases = [0, 1.7, 3.1, 4.4, 5.3, 2.2].map((p) => p + Math.random() * 6);
 
+  /** rifle cant (deg, + = clockwise as seen by the shooter) */
+  cantDeg = 0;
+
   setPosition(p: PositionDef) {
     this.position = p;
     this.settle = 2.5;
+    // Settling into a new position leaves an unnoticed cant the shooter has to level out.
+    this.cantDeg = this.rand.normal() * p.cantSd;
+  }
+
+  /** Level the rifle by hand (Q / E). */
+  adjustCant(deg: number) {
+    this.cantDeg = Math.max(-15, Math.min(15, this.cantDeg + deg));
+    this.settle = Math.min(3, this.settle + 0.15);
   }
 
   /** Feed rifle movement (mrad of aim change this frame) so moving costs stability. */
@@ -158,11 +173,16 @@ export class Shooter {
     this.stress = Math.max(0, this.stress - 0.02);
   }
 
-  /** How far the eye has moved in the eye box, roughly -1..1 (recoil and unstable positions). */
+  /** How far the eye sits from the centre of the eye box, roughly -1..1: slow head drift for
+   *  the position, plus the jolt of recoil. Drives the scope shadow and parallax error. */
   eyeOffset(): { x: number; y: number } {
+    const t = this.t;
+    const h = this.position.head * (1 + this.settle * 0.3);
+    const hx = (Math.sin(t * 0.21 + 0.7) * 0.6 + Math.sin(t * 0.53 + 2.1) * 0.4) * h;
+    const hy = (Math.sin(t * 0.17 + 1.9) * 0.6 + Math.sin(t * 0.47 + 0.3) * 0.4) * h;
     return {
-      x: Math.max(-1, Math.min(1, this.recoilX * 0.25)),
-      y: Math.max(-1, Math.min(1, -this.recoilY * 0.12)),
+      x: Math.max(-1, Math.min(1, hx + this.recoilX * 0.25)),
+      y: Math.max(-1, Math.min(1, hy - this.recoilY * 0.12)),
     };
   }
 }
