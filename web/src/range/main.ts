@@ -1053,6 +1053,8 @@ document.addEventListener("keydown", (e) => {
       setZero(s);
       break;
     case "KeyN":
+      // Cancel the key's default so the "n" isn't typed into the field that just took focus.
+      e.preventDefault();
       openRangeEntry();
       break;
     case "KeyX":
