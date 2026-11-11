@@ -462,7 +462,8 @@ function shoot() {
     : null;
   const coachInfo = { holdTimeS: s.shooter.holdTime, cantDeg, parallaxM: parallaxM(s) };
   s.lastFlight = { path: out.path, times: out.times };
-  s.world.launch(out.path, out.times, s.t, 0.12 + humidity * 0.35, () =>
+  // The trace shows best in humid air; on very dry days it is faint.
+  s.world.launch(out.path, out.times, s.t, 0.22 + humidity * 0.45, () =>
     resolveImpact(s, shotNo, out, intended, dialMrad, heldBreath, inPause, ctx, coachInfo),
   );
 }
@@ -1214,6 +1215,7 @@ function frame(now: number) {
   const w = logOpen ? full - 292 : full;
   const h = window.innerHeight;
   renderer.setViewport(0, 0, w, h);
+  s.world.setViewportHeight(h * renderer.getPixelRatio());
   camera.aspect = w / h;
   const eye = s.shooter.position.eyeHeightM;
   const line = sightLine(s);

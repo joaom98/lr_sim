@@ -41,13 +41,50 @@ interface Puff {
 }
 
 interface Tracer {
-  line: THREE.Line;
+  points: THREE.Points;
   path: THREE.Vector3[];
   times: number[];
   t0: number;
+  visibility: number;
   onDone: () => void;
+  /** time the bullet arrived (the wake then fades out), or null while in flight */
+  impactAt: number | null;
   done: boolean;
 }
+
+/** Puffs in the bullet's wake and how far apart they sit (m). */
+const TRACE_POINTS = 56;
+const TRACE_SPACING_M = 1.1;
+
+// The "trace": the bullet's wake refracting light, seen from behind as a soft, pale streak
+// a few decimetres wide. Rendered as point sprites sized in metres (scaled by the camera's
+// projection, so it reads correctly through any magnification) that fade toward the tail.
+const traceVertex = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_vertex>
+attribute float aAlpha;
+attribute float aSize;
+uniform float uHalfHeight;
+varying float vAlpha;
+void main() {
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = max(1.5, aSize * projectionMatrix[1][1] * uHalfHeight / -mv.z);
+  vAlpha = aAlpha;
+  #include <logdepthbuf_vertex>
+}`;
+
+const traceFragment = /* glsl */ `
+#include <logdepthbuf_pars_fragment>
+uniform vec3 uColor;
+varying float vAlpha;
+void main() {
+  #include <logdepthbuf_fragment>
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  float a = vAlpha * (1.0 - smoothstep(0.25, 1.0, d));
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(uColor, a);
+}`;
 
 export const world = (p: { down: number; right: number; up: number }) => new THREE.Vector3(p.right, p.up, -p.down);
 
@@ -558,37 +595,90 @@ export class World {
     // Bullet traces
     for (const tr of this.tracers) {
       if (tr.done) continue;
-      const ft = t - tr.t0;
-      const last = tr.times.length - 1;
-      if (ft >= tr.times[last]) {
-        tr.done = true;
-        this.scene.remove(tr.line);
-        tr.line.geometry.dispose();
+      const end = tr.times[tr.times.length - 1];
+      const ft = Math.min(t - tr.t0, end);
+      if (tr.impactAt === null && t - tr.t0 >= end) {
+        tr.impactAt = t;
         tr.onDone();
+      }
+      // After impact the wake hangs for a moment, then fades.
+      const fade = tr.impactAt === null ? 1 : 1 - (t - tr.impactAt) / 0.35;
+      if (fade <= 0) {
+        tr.done = true;
+        this.scene.remove(tr.points);
+        tr.points.geometry.dispose();
         continue;
       }
-      let k = 1;
-      while (k < last && tr.times[k] < ft) k++;
-      const f = (ft - tr.times[k - 1]) / Math.max(1e-6, tr.times[k] - tr.times[k - 1]);
-      const head = tr.path[k - 1].clone().lerp(tr.path[k], f);
-      const tailIdx = Math.max(0, k - 6);
-      const pos = tr.line.geometry.attributes.position.array as Float32Array;
-      pos.set([tr.path[tailIdx].x, tr.path[tailIdx].y, tr.path[tailIdx].z, head.x, head.y, head.z]);
-      tr.line.geometry.attributes.position.needsUpdate = true;
-      tr.line.geometry.computeBoundingSphere();
+      // Distance travelled so far, measured along the path, sets how long the wake can be.
+      const head = this.pathIndexAt(tr, ft);
+      const pos = tr.points.geometry.attributes.position.array as Float32Array;
+      const alpha = tr.points.geometry.attributes.aAlpha.array as Float32Array;
+      const size = tr.points.geometry.attributes.aSize.array as Float32Array;
+      const p = new THREE.Vector3();
+      for (let i = 0; i < TRACE_POINTS; i++) {
+        const idx = head - i * TRACE_SPACING_M;
+        if (idx < 2) {
+          alpha[i] = 0;
+          continue;
+        }
+        const k = Math.floor(idx);
+        p.copy(tr.path[k]).lerp(tr.path[Math.min(k + 1, tr.path.length - 1)], idx - k);
+        pos[i * 3] = p.x;
+        pos[i * 3 + 1] = p.y;
+        pos[i * 3 + 2] = p.z;
+        const u = i / TRACE_POINTS;
+        // Densest just behind the bullet, thinning and widening toward the tail.
+        alpha[i] = tr.visibility * fade * Math.pow(1 - u, 1.6) * (0.75 + 0.25 * Math.sin(i * 1.7 + t * 40));
+        size[i] = 0.16 + 0.32 * u;
+      }
+      tr.points.geometry.attributes.position.needsUpdate = true;
+      tr.points.geometry.attributes.aAlpha.needsUpdate = true;
+      tr.points.geometry.attributes.aSize.needsUpdate = true;
     }
     this.tracers = this.tracers.filter((x) => !x.done);
   }
 
-  /** Animate the bullet along its path; `onDone` fires when it reaches the end. */
+  /** Fractional index into the path (≈1 m per step) where the bullet is at flight time `ft`. */
+  private pathIndexAt(tr: Tracer, ft: number): number {
+    const ts = tr.times;
+    let lo = 0;
+    let hi = ts.length - 1;
+    if (ft >= ts[hi]) return hi;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (ts[mid] <= ft) lo = mid;
+      else hi = mid;
+    }
+    return lo + (ft - ts[lo]) / Math.max(1e-6, ts[hi] - ts[lo]);
+  }
+
+  private traceMaterial = new THREE.ShaderMaterial({
+    vertexShader: traceVertex,
+    fragmentShader: traceFragment,
+    uniforms: { uHalfHeight: { value: 400 }, uColor: { value: new THREE.Color(0xe6ecef) } },
+    transparent: true,
+    depthWrite: false,
+  });
+
+  /** Drawing-buffer height in pixels, so the trace is sized correctly on screen. */
+  setViewportHeight(px: number) {
+    this.traceMaterial.uniforms.uHalfHeight.value = px / 2;
+  }
+
+  /**
+   * Animate the bullet's trace along its path. `visibility` (0..1) sets how strongly the wake
+   * shows (humid air shows it best). `onDone` fires when the bullet reaches the end.
+   */
   launch(path: THREE.Vector3[], times: number[], t0: number, visibility: number, onDone: () => void) {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(6), 3));
-    const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: visibility, depthWrite: false });
-    const line = new THREE.Line(geo, mat);
-    line.frustumCulled = false;
-    this.scene.add(line);
-    this.tracers.push({ line, path, times, t0, onDone, done: false });
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS * 3), 3));
+    geo.setAttribute("aAlpha", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS), 1));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array(TRACE_POINTS), 1));
+    const points = new THREE.Points(geo, this.traceMaterial);
+    points.frustumCulled = false;
+    points.renderOrder = 2;
+    this.scene.add(points);
+    this.tracers.push({ points, path, times, t0, visibility, onDone, impactAt: null, done: false });
   }
 
   steelHit(tg: TargetObj, u: number, v: number, energyJ: number, t: number) {
