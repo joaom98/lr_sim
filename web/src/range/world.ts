@@ -69,7 +69,8 @@ varying float vAlpha;
 void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = max(1.5, aSize * projectionMatrix[1][1] * uHalfHeight / -mv.z);
+  // Capped so a puff close to the scope can never flood the view.
+  gl_PointSize = clamp(aSize * projectionMatrix[1][1] * uHalfHeight / -mv.z, 1.5, uHalfHeight * 0.06);
   vAlpha = aAlpha;
   #include <logdepthbuf_vertex>
 }`;
@@ -627,9 +628,12 @@ export class World {
         pos[i * 3 + 1] = p.y;
         pos[i * 3 + 2] = p.z;
         const u = i / TRACE_POINTS;
+        // Hidden near the muzzle (blast, and far out of focus in the scope); fully visible by ~150 m.
+        const range = Math.hypot(p.x, p.z);
+        const nearFade = Math.min(1, Math.max(0, (range - 40) / 110));
         // Densest just behind the bullet, thinning and widening toward the tail.
-        alpha[i] = tr.visibility * fade * Math.pow(1 - u, 1.6) * (0.75 + 0.25 * Math.sin(i * 1.7 + t * 40));
-        size[i] = 0.16 + 0.32 * u;
+        alpha[i] = tr.visibility * fade * nearFade * Math.pow(1 - u, 1.8) * (0.75 + 0.25 * Math.sin(i * 1.7 + t * 40));
+        size[i] = 0.1 + 0.2 * u;
       }
       tr.points.geometry.attributes.position.needsUpdate = true;
       tr.points.geometry.attributes.aAlpha.needsUpdate = true;

@@ -463,7 +463,7 @@ function shoot() {
   const coachInfo = { holdTimeS: s.shooter.holdTime, cantDeg, parallaxM: parallaxM(s) };
   s.lastFlight = { path: out.path, times: out.times };
   // The trace shows best in humid air; on very dry days it is faint.
-  s.world.launch(out.path, out.times, s.t, 0.22 + humidity * 0.45, () =>
+  s.world.launch(out.path, out.times, s.t, 0.14 + humidity * 0.3, () =>
     resolveImpact(s, shotNo, out, intended, dialMrad, heldBreath, inPause, ctx, coachInfo),
   );
 }
